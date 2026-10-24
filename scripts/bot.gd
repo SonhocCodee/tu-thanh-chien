@@ -95,11 +95,12 @@ func _scout_done() -> bool:
 		return true
 	return _scout.global_position.distance_to(_scout_dest) < 150.0
 
-## Chọn 1 quân đang rảnh làm trinh sát.
+## Chọn 1 quân đang rảnh làm trinh sát. TU SĨ không làm trinh sát: nó
+## không tự vệ được và giá trị nằm ở việc bám đội hình chữa trị.
 func _pick_scout() -> Unit:
 	for n in game.get_tree().get_nodes_in_group("units"):
 		var u := n as Unit
-		if u.owner_pid == player.pid and u.is_alive() and u.direct_mode == "":
+		if u.owner_pid == player.pid and u.is_alive() and u.direct_mode == "" and u.unit_type != "monk":
 			return u
 	return null
 
@@ -217,8 +218,47 @@ func _decide() -> void:
 	# 4) Huấn luyện: nông dân tới ngưỡng, rồi quân liên tục khi còn giới hạn.
 	if villagers < int(Stats.BOT["villager_target"]) and castle.queue_count() < 2:
 		ctrl.queue_training(castle, "pawn")
+	# 4b) TU SĨ tại THÀNH CHÍNH: đạo quân đạt cỡ vừa (monk_min_army ô
+	# quân) thì luyện 1 tu sĩ, lớn hơn nữa (monk_second_army ô) thì 2 —
+	# tính cả tu sĩ đang sống lẫn đang nằm trong hàng chờ của thành để
+	# không dồn đơn. Tu sĩ tự bám đội hình/chữa/bỏ chạy trong unit.gd.
+	# Hàng chờ thành là tài nguyên TRANH NHAU (nông dân + kiếm sĩ dự
+	# phòng khi chưa có doanh trại): tu sĩ xếp SAU nông dân nhưng TRƯỚC
+	# kiếm sĩ dự phòng, nhận trần hàng chờ < 3 như nhánh kiếm sĩ — trần
+	# < 2 sẽ bị chính hàng chờ 2 món thường trực của thành chặn vĩnh
+	# viễn (đã bắt gặp khi soi bot: q=[pawn, warrior] suốt trận).
+	var army_now: int = game.army_used(player.pid)
+	var want_monks := 0
+	if army_now >= int(Stats.BOT["monk_second_army"]):
+		want_monks = int(Stats.BOT["monk_max"])
+	elif army_now >= int(Stats.BOT["monk_min_army"]):
+		want_monks = 1
+	var monks_now: int = game.unit_type_count(player.pid, "monk")
+	for item in castle.train_queue:
+		if str(item["unit_type"]) == "monk":
+			monks_now += 1
+	if want_monks > monks_now and castle.queue_count() < 3:
+		ctrl.queue_training(castle, "monk")
+	# DÀNH VÀNG CHO TU SĨ: cung thủ (70 vàng) ăn hết vàng tích luỹ ở mọi
+	# nhịp quyết định khiến tu sĩ không bao giờ đủ 100 vàng. Bot DÀNH
+	# VÀNG SỚM: từ khi đạo quân còn cách ngưỡng tu sĩ 2 ô đã ngừng đốt
+	# vàng vào quân thường nếu chưa đủ giá tu sĩ — tới lúc chạm ngưỡng
+	# là xếp hàng được ngay. Nhịn tới khi tu sĩ vào hàng chờ thành thì
+	# luyện quân lại bình thường. Mục tiêu dành vàng: đã tới ngưỡng thì
+	# dành đúng số tu sĩ ĐANG muốn; chưa tới thì chỉ dành cho tu sĩ ĐẦU
+	# TIÊN khi còn cách 2 ô.
+	# LỐI THOÁT (như bẫy lancer đã sửa ở mục 4 dưới): dành vàng CHỈ khi
+	# nguồn vàng còn sống (nearest_resource_node gold != null) — vàng
+	# chết nguồn thì không chờ vĩnh viễn, luyện quân thường ngay bằng
+	# số vàng đang có; chợ ở bước 3.5 cũng có thể bơm thêm vàng trước.
+	var plan_target := want_monks
+	if plan_target == 0 and army_now >= int(Stats.BOT["monk_min_army"]) - 2:
+		plan_target = 1
+	var planning_monk := monks_now < plan_target
+	var saving_for_monk := planning_monk and not player.can_afford(Stats.TRAINING["monk"]["cost"]) \
+		and game.nearest_resource_node(player.pid, "gold", castle.global_position) != null
 	var barracks: Building = game.active_barracks(player.pid)
-	if barracks != null and barracks.queue_count() < 3:
+	if barracks != null and barracks.queue_count() < 3 and not saving_for_monk:
 		# Trộn LÍNH GIÁO (tinh nhuệ, 2 ô) vào đạo quân: giữ tỉ lệ khoảng
 		# 1 giáo / 4 quân; chỉ gọi luyện khi còn đủ 2 ô quân trống.
 		# Bẫy cũ: bot đòi lancer (150 vàng) vô điều kiện mỗi tick — vàng
@@ -238,7 +278,10 @@ func _decide() -> void:
 			ctrl.queue_training(barracks, "lancer")
 		else:
 			ctrl.queue_training(barracks, "archer")
-	elif castle.queue_count() < 3:
+	elif castle.queue_count() < 3 and not saving_for_monk:
+		# Nhánh dự phòng này cũng phải tôn trọng DÀNH VÀNG: nếu chỉ chặn
+		# doanh trại mà nhánh này vẫn luyện kiếm sĩ ở thành (80 vàng) thì
+		# vàng tích luỹ bị ăn sạch qua cửa sau, tu sĩ vẫn không đủ tiền.
 		ctrl.queue_training(castle, "warrior")
 
 	# 5) Trinh sát + tấn công (không làm khi đang bị uy hiếp).
