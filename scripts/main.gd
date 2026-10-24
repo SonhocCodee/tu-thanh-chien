@@ -39,6 +39,19 @@ var elapsed: float = 0.0
 var placing_type: String = ""
 var awaiting_order: bool = false
 
+# --- Placement preview: bóng ma công trình bám theo chuột khi đang đặt ---
+var _place_ghost: Node2D = null
+var _ghost_sprite: Sprite2D = null
+var _ghost_foot: Polygon2D = null
+var _ghost_type: String = ""
+# Khớp đúng tỉ lệ + độ lệch sprite trong building.gd để bóng ma trông y nhà thật.
+const GHOST_PRESENT := {
+	"house": [0.55, -28.0],
+	"barracks": [0.5, -38.0],
+	"tower": [0.45, -52.0],
+	"storehouse": [0.6, -30.0],
+}
+
 # --- M2: camera + chọn quân ---
 var _camera: Camera2D = null
 var _sel_overlay: Node2D = null
@@ -109,6 +122,7 @@ func _process(delta: float) -> void:
 		_fog_timer = float(Stats.FOG["update_interval"])
 		_update_fog()
 	_update_camera(delta)
+	_update_place_ghost()
 	if demo_mode:
 		_demo_update()
 	if m2demo_mode:
@@ -531,7 +545,11 @@ func build_slots(pid: int) -> Array:
 		c + Vector2(mx * -175, 0), # ô cho Nhà Kho (đặt ngoài vùng căn cứ cũng được)
 	]
 
-func exec_place_building(player: PlayerState, building_type: String, pos: Vector2) -> bool:
+## Luật đặt nhà DÙNG CHUNG — 1 nguồn luật duy nhất cho click đặt thật
+## (exec_place_building) và bóng ma xem trước (placement preview).
+## true = đặt được tại pos: còn đủ tiền, đúng vùng (Nhà Kho: vùng ĐÃ KHÁM PHÁ;
+## nhà thường: vùng căn cứ), không quá gần công trình (62) / node (48) / cừu (40).
+func can_place_building(player: PlayerState, building_type: String, pos: Vector2) -> bool:
 	if not Stats.BUILDINGS.has(building_type):
 		return false
 	var def: Dictionary = Stats.BUILDINGS[building_type]
@@ -554,6 +572,12 @@ func exec_place_building(player: PlayerState, building_type: String, pos: Vector
 	for n in get_tree().get_nodes_in_group("sheep"):
 		if (n as Node2D).global_position.distance_to(pos) < 40.0:
 			return false
+	return true
+
+func exec_place_building(player: PlayerState, building_type: String, pos: Vector2) -> bool:
+	if not can_place_building(player, building_type, pos):
+		return false
+	var def: Dictionary = Stats.BUILDINGS[building_type]
 	player.pay(def["cost"])
 	var b := BuildingScene.instantiate() as Building
 	b.setup(player.pid, building_type, player.color_key, self)
@@ -1028,6 +1052,63 @@ func cancel_modes() -> void:
 	_zone_rect.visible = false
 	for c in castles.values():
 		(c as Castle).highlight_target = false
+
+# ===================== BÓNG MA ĐẶT NHÀ (placement preview) =====================
+# Khi đang ở chế độ đặt nhà (placing_type != ""): hiện sprite thật của công
+# trình (đúng loại + màu phe người chơi, bán trong suốt) neo tại điểm mặt đất
+# dưới con trỏ (tọa độ world qua camera) + vòng chân đế đúng bán kính chiếm
+# đất của công trình. Xanh = đặt được, đỏ = không — tính bằng ĐÚNG hàm luật
+# can_place_building mà click đặt nhà dùng (không có bộ luật thứ hai).
+# Mọi đường thoát placement (đặt xong / chuột phải / Esc) đều đưa placing_type
+# về "" nên bóng ma tự ẩn ở frame kế tiếp, không cần móc thêm vào từng đường.
+
+func _ensure_place_ghost() -> void:
+	if _place_ghost != null:
+		return
+	_place_ghost = Node2D.new()
+	_place_ghost.z_index = 65 # trên lớp sương mù (50) và khung chọn (60)
+	_place_ghost.visible = false
+	_ghost_foot = Polygon2D.new()
+	_ghost_foot.z_as_relative = true
+	_ghost_foot.z_index = -1 # chân đế nằm dưới sprite trong cùng node ghost
+	_place_ghost.add_child(_ghost_foot)
+	_ghost_sprite = Sprite2D.new()
+	_place_ghost.add_child(_ghost_sprite)
+	add_child(_place_ghost)
+
+func _setup_ghost_for(building_type: String) -> void:
+	_ghost_type = building_type
+	var color_key: String = players[HUMAN_PID].color_key
+	_ghost_sprite.texture = load("res://assets/buildings/%s_%s.png" % [building_type, color_key])
+	var present: Array = GHOST_PRESENT.get(building_type, [0.55, -30.0])
+	var sc := float(present[0])
+	_ghost_sprite.scale = Vector2(sc, sc)
+	_ghost_sprite.position = Vector2(0, float(present[1]))
+	var r := float(Stats.BUILDINGS[building_type]["radius"])
+	var pts := PackedVector2Array()
+	for i in 40:
+		var a := TAU * float(i) / 40.0
+		pts.append(Vector2(cos(a), sin(a)) * r)
+	_ghost_foot.polygon = pts
+
+func _update_place_ghost() -> void:
+	if placing_type == "" or match_over:
+		if _place_ghost != null:
+			_place_ghost.visible = false
+		return
+	_ensure_place_ghost()
+	if _ghost_type != placing_type:
+		_setup_ghost_for(placing_type)
+	var pos := get_global_mouse_position()
+	_place_ghost.global_position = pos
+	_place_ghost.visible = true
+	var ok := can_place_building(players[HUMAN_PID], placing_type, pos)
+	if ok:
+		_ghost_sprite.modulate = Color(0.65, 1.35, 0.65, 0.55)
+		_ghost_foot.color = Color(0.35, 1.0, 0.35, 0.30)
+	else:
+		_ghost_sprite.modulate = Color(1.45, 0.5, 0.5, 0.55)
+		_ghost_foot.color = Color(1.0, 0.3, 0.3, 0.30)
 
 func start_order_mode() -> void:
 	awaiting_order = true
