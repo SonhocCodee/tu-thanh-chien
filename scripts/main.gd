@@ -9,15 +9,20 @@ const CastleScene := preload("res://scenes/castle.tscn")
 const BuildingScene := preload("res://scenes/building.tscn")
 const ProjectileScene := preload("res://scenes/projectile.tscn")
 
-const WORLD := Vector2(1280, 640)
-const FIELD_BOTTOM := 610.0
+const WORLD := Vector2(1920, 960)
+const FIELD_BOTTOM := 610.0 # mép trên của panel HUD dưới (tọa độ MÀN HÌNH, không phải map)
 const CASTLE_POS := {
-	0: Vector2(180, 470), # Xanh dương — người chơi, dưới-trái
-	1: Vector2(180, 160), # Vàng — trên-trái
-	2: Vector2(1100, 160), # Đỏ — trên-phải
-	3: Vector2(1100, 470), # Tím — dưới-phải
+	0: Vector2(220, 780), # Xanh dương — người chơi, dưới-trái
+	1: Vector2(220, 180), # Vàng — trên-trái
+	2: Vector2(1700, 180), # Đỏ — trên-phải
+	3: Vector2(1700, 780), # Tím — dưới-phải
 }
+# Khoảng cách tối thiểu giữa 2 thành kề nhau (cặp trên-dưới): 600px.
+# Tầm nhìn thành 265 + 265 = 530 < 600 nên đầu trận các căn cứ không thấy nhau:
+# muốn biết địch ở đâu bắt buộc phải trinh sát.
 const HUMAN_PID := 0
+const CAM_SPEED := 1000.0
+const EDGE_MARGIN := 18.0
 
 var players: Array = [] # Array[PlayerState]
 var controllers: Array = [] # Array[PlayerController]
@@ -33,6 +38,19 @@ var elapsed: float = 0.0
 
 var placing_type: String = ""
 var awaiting_order: bool = false
+
+# --- M2: camera + chọn quân ---
+var _camera: Camera2D = null
+var _sel_overlay: Node2D = null
+var _drag_candidate: bool = false
+var _dragging: bool = false
+var _drag_start: Vector2 = Vector2.ZERO
+var _drag_current: Vector2 = Vector2.ZERO
+var _demo_drag_rect: Rect2 = Rect2()
+var _demo_show_drag: bool = false
+var m2demo_mode: bool = false
+var _m2demo_stage: int = 0
+var _m2demo_timer: float = 0.0
 
 var _rng := RandomNumberGenerator.new()
 var _fog_timer: float = 0.0
@@ -51,6 +69,10 @@ func _ready() -> void:
 		demo_mode = true
 		Engine.time_scale = 3.0
 		bot_attack_size_override = 4
+	if "--m2demo" in args:
+		m2demo_mode = true
+		bots_enabled = false
+		Engine.time_scale = 3.0
 	_build_players()
 	_build_map()
 	_build_resource_nodes()
@@ -73,8 +95,11 @@ func _process(delta: float) -> void:
 	if _fog_timer <= 0.0:
 		_fog_timer = float(Stats.FOG["update_interval"])
 		_update_fog()
+	_update_camera(delta)
 	if demo_mode:
 		_demo_update()
+	if m2demo_mode:
+		_demo_m2_update(delta)
 
 # ===================== DỰNG BAN ĐẦU =====================
 
@@ -114,15 +139,15 @@ func _build_map() -> void:
 	var water_map := TileMap.new()
 	water_map.tile_set = ts
 	water_map.z_index = -10
-	for x in 20:
-		for y in 12:
+	for x in 30:
+		for y in 16:
 			water_map.set_cell(0, Vector2i(x, y), 0, Vector2i(0, 0))
 	add_child(water_map)
 	var land_map := TileMap.new()
 	land_map.tile_set = ts
 	land_map.z_index = -9
-	for x in range(0, 20):
-		for y in range(0, 10):
+	for x in range(0, 30):
+		for y in range(0, 15):
 			land_map.set_cell(0, Vector2i(x, y), 1, Vector2i(1, 1))
 	add_child(land_map)
 	_units_layer = Node2D.new()
@@ -132,7 +157,7 @@ func _build_map() -> void:
 	_fx_layer.z_index = 20
 	add_child(_fx_layer)
 	# Trang trí: cây/đá rải xa căn cứ và điểm tài nguyên.
-	var deco_pos := [Vector2(430, 120), Vector2(850, 130), Vector2(430, 520), Vector2(850, 520), Vector2(640, 200), Vector2(640, 420), Vector2(330, 300), Vector2(950, 300)]
+	var deco_pos := [Vector2(645, 180), Vector2(1275, 195), Vector2(645, 780), Vector2(1275, 780), Vector2(960, 300), Vector2(960, 630), Vector2(495, 450), Vector2(1425, 450)]
 	for i in deco_pos.size():
 		var spr := Sprite2D.new()
 		if i % 2 == 0:
@@ -157,23 +182,34 @@ func _build_map() -> void:
 	_fog_overlay = FogOverlay.new()
 	_fog_overlay.z_index = 50
 	add_child(_fog_overlay)
+	# Camera M2: bắt đầu nhìn về góc căn cứ người chơi, kẹp trong biên map.
+	_camera = Camera2D.new()
+	_camera.position_smoothing_enabled = false
+	add_child(_camera)
+	_camera.make_current()
+	set_camera_to(CASTLE_POS[HUMAN_PID])
+	# Lớp vẽ khung chọn quân (tọa độ thế giới, đi theo camera).
+	_sel_overlay = SelectionOverlay.new()
+	_sel_overlay.game = self
+	_sel_overlay.z_index = 60
+	add_child(_sel_overlay)
 
 func _build_resource_nodes() -> void:
 	for pid in CASTLE_POS.keys():
 		var c: Vector2 = CASTLE_POS[pid]
-		var mx := 1.0 if c.x < 640.0 else -1.0
-		var my := 1.0 if c.y < 320.0 else -1.0
+		var mx := 1.0 if c.x < WORLD.x / 2.0 else -1.0
+		var my := 1.0 if c.y < WORLD.y / 2.0 else -1.0
 		_add_node("wood", false, c + Vector2(mx * 150, -45))
 		_add_node("wood", false, c + Vector2(mx * 150, 45))
 		_add_node("wood", false, c + Vector2(mx * 95, my * 105))
 		_add_node("stone", false, c + Vector2(mx * 205, my * 55))
 		_add_node("gold", false, c + Vector2(mx * 205, -my * 55))
 	# Điểm tài nguyên LỚN giữa map — nằm trong vùng tối đầu trận, phải trinh sát.
-	_add_node("gold", true, Vector2(640, 305))
-	_add_node("wood", true, Vector2(600, 105))
-	_add_node("wood", true, Vector2(680, 105))
-	_add_node("stone", true, Vector2(610, 505))
-	_add_node("stone", true, Vector2(675, 505))
+	_add_node("gold", true, Vector2(960, 460))
+	_add_node("wood", true, Vector2(900, 155))
+	_add_node("wood", true, Vector2(1020, 155))
+	_add_node("stone", true, Vector2(920, 765))
+	_add_node("stone", true, Vector2(1010, 765))
 
 func _add_node(res_type: String, big: bool, pos: Vector2) -> void:
 	var n := ResourceNode.new()
@@ -221,6 +257,9 @@ func _build_hud() -> void:
 	_hud = Hud.new()
 	_hud.setup(self, human_controller())
 	add_child(_hud)
+	# Panel hướng dẫn tự mở khi vào trận (trừ chế độ demo chụp ảnh).
+	if not demo_mode and not m2demo_mode:
+		_hud.show_help()
 
 # ===================== SƯƠNG MÙ =====================
 
@@ -325,30 +364,45 @@ func exec_set_allocation(player: PlayerState, w: int, s: int, g: int) -> bool:
 	_rebalance_villagers(player)
 	return true
 
+func rebalance_player(pid: int) -> void:
+	_rebalance_villagers(players[pid])
+
 func _rebalance_villagers(player: PlayerState) -> void:
+	# Nông dân đang làm theo LỆNH TRỰC TIẾP (click phải) được giữ nguyên:
+	# lệnh trực tiếp ưu tiên hơn phân bổ +/-. Số lượng direct theo từng loại
+	# được trừ vào chỉ tiêu phân bổ, phần còn lại chia cho nông dân chưa có lệnh.
 	var list := _villagers_of(player.pid)
 	var want := [int(player.allocation["wood"]), int(player.allocation["stone"]), int(player.allocation["gold"])]
 	var keys := ["wood", "stone", "gold"]
+	for v in list:
+		var vil := v as Villager
+		if vil.is_direct():
+			var ki := keys.find(vil.direct_res)
+			if ki >= 0:
+				want[ki] = maxi(0, want[ki] - 1)
 	var idx := 0
 	for ki in 3:
 		for j in want[ki]:
+			while idx < list.size() and (list[idx] as Villager).is_direct():
+				idx += 1
 			if idx >= list.size():
 				return
 			(list[idx] as Villager).set_assignment(keys[ki])
 			idx += 1
 	while idx < list.size():
-		(list[idx] as Villager).set_assignment("")
+		if not (list[idx] as Villager).is_direct():
+			(list[idx] as Villager).set_assignment("")
 		idx += 1
 
 func base_zone(pid: int) -> Rect2:
 	var c: Vector2 = CASTLE_POS[pid]
 	var r := Rect2(c - Vector2(150, 115), Vector2(300, 230))
-	return r.intersection(Rect2(8, 8, 1264, 602))
+	return r.intersection(Rect2(8, 8, WORLD.x - 16, WORLD.y - 16))
 
 func build_slots(pid: int) -> Array:
 	var c: Vector2 = CASTLE_POS[pid]
-	var mx := 1.0 if c.x < 640.0 else -1.0
-	var my := 1.0 if c.y < 320.0 else -1.0
+	var mx := 1.0 if c.x < WORLD.x / 2.0 else -1.0
+	var my := 1.0 if c.y < WORLD.y / 2.0 else -1.0
 	return [
 		c + Vector2(mx * -105, my * -80),
 		c + Vector2(mx * -105, my * 80),
@@ -395,10 +449,18 @@ func exec_queue_training(player: PlayerState, building: Structure, unit_type: St
 	building.enqueue(unit_type, float(def["time"]) / float(prod["speed"]))
 	return true
 
+func _clear_direct_orders(pid: int) -> void:
+	# Lệnh thái độ / trinh sát toàn quân thắng lệnh trực tiếp từng nhóm.
+	for n in get_tree().get_nodes_in_group("units"):
+		var u := n as Unit
+		if u.owner_pid == pid and u.is_alive():
+			u.clear_direct()
+
 func exec_set_stance(player: PlayerState, stance: String, target_pid: int) -> bool:
 	if stance == "hold":
 		player.stance = "hold"
 		player.target_pid = -1
+		_clear_direct_orders(player.pid)
 		return true
 	if stance == "attack":
 		if target_pid < 0 or target_pid == player.pid or not players[target_pid].alive:
@@ -406,14 +468,224 @@ func exec_set_stance(player: PlayerState, stance: String, target_pid: int) -> bo
 		player.stance = "attack"
 		player.target_pid = target_pid
 		player.attacks_launched_total += 1
+		_clear_direct_orders(player.pid)
 		return true
 	return false
 
 func exec_order_move(player: PlayerState, point: Vector2) -> bool:
 	player.stance = "move"
 	player.target_pid = -1
-	player.move_point = Vector2(clampf(point.x, 16, 1264), clampf(point.y, 16, FIELD_BOTTOM - 8))
+	player.move_point = Vector2(clampf(point.x, 16, WORLD.x - 16), clampf(point.y, 16, WORLD.y - 16))
+	_clear_direct_orders(player.pid)
 	return true
+
+# ===================== LỆNH TRỰC TIẾP M2 (qua PlayerController) =====================
+
+func clamp_to_world(point: Vector2) -> Vector2:
+	return Vector2(clampf(point.x, 16, WORLD.x - 16), clampf(point.y, 16, WORLD.y - 16))
+
+func exec_direct_move(player: PlayerState, unit: Unit, point: Vector2) -> bool:
+	if unit == null or unit.owner_pid != player.pid or not unit.is_alive():
+		return false
+	unit.set_direct_move(clamp_to_world(point))
+	return true
+
+func exec_villager_move(player: PlayerState, v: Villager, point: Vector2) -> bool:
+	if v == null or v.owner_pid != player.pid:
+		return false
+	v.set_move_point(clamp_to_world(point))
+	return true
+
+func exec_direct_farm(player: PlayerState, v: Villager, node: ResourceNode) -> bool:
+	if v == null or v.owner_pid != player.pid or node == null:
+		return false
+	# Lệnh farm trực tiếp cũng tôn trọng sương mù: chỉ farm điểm đã khám phá.
+	if not is_pos_explored_for(player.pid, node.global_position):
+		return false
+	v.set_direct(node)
+	return true
+
+func exec_direct_attack(player: PlayerState, unit: Unit, target: Node) -> bool:
+	if unit == null or unit.owner_pid != player.pid or not unit.is_alive():
+		return false
+	if target == null or not is_instance_valid(target):
+		return false
+	# Luật sương mù cho tấn công trực tiếp (giống luật tấn công thành):
+	# quân địch phải đang SÁNG; công trình địch phải đã khám phá (thành: lộ diện).
+	if target is Unit:
+		var tu := target as Unit
+		if tu.owner_pid == player.pid or not tu.is_alive():
+			return false
+		if not (fogs[player.pid] as FogOfWar).is_visible_pos(tu.global_position):
+			return false
+	elif target is Structure:
+		var ts := target as Structure
+		if ts.owner_pid == player.pid or not ts.is_alive():
+			return false
+		if ts is Castle:
+			if not is_castle_revealed_for(player.pid, ts.owner_pid):
+				return false
+		elif not is_pos_explored_for(player.pid, ts.global_position):
+			return false
+	else:
+		return false
+	unit.set_direct_attack(target)
+	return true
+
+# ---- Tìm mục tiêu click phải (chỉ tính những gì người chơi THẤY được) ----
+
+func enemy_unit_at(pos: Vector2, radius: float) -> Unit:
+	var fog: FogOfWar = fogs[HUMAN_PID]
+	var best: Unit = null
+	var best_d := radius
+	for n in get_tree().get_nodes_in_group("units"):
+		var u := n as Unit
+		if u.owner_pid == HUMAN_PID or not u.is_alive():
+			continue
+		if not fog.is_visible_pos(u.global_position):
+			continue
+		var d := u.global_position.distance_to(pos)
+		if d < best_d:
+			best_d = d
+			best = u
+	return best
+
+func enemy_structure_at(pos: Vector2) -> Structure:
+	var best: Structure = null
+	var best_d := 1e9
+	for n in get_tree().get_nodes_in_group("structures"):
+		var s := n as Structure
+		if s.owner_pid == HUMAN_PID or not s.is_alive():
+			continue
+		var d := s.global_position.distance_to(pos)
+		if d <= s.radius + 14.0 and d < best_d:
+			best_d = d
+			best = s
+	return best
+
+func res_node_at(pos: Vector2, radius: float) -> ResourceNode:
+	var best: ResourceNode = null
+	var best_d := radius
+	for n in get_tree().get_nodes_in_group("res_nodes"):
+		var node := n as ResourceNode
+		var d := node.global_position.distance_to(pos)
+		if d < best_d:
+			best_d = d
+			best = node
+	return best
+
+func spawn_order_marker(pos: Vector2, color: Color) -> void:
+	var m := OrderMarker.new()
+	m.position = pos
+	m.marker_color = color
+	# Marker là phản hồi lệnh của chính người chơi nên vẽ TRÊN sương mù
+	# (fog z=50) — nếu không, lệnh vào vùng chưa khám phá sẽ không thấy
+	# dấu hiệu gì dù lệnh vẫn chạy.
+	m.z_index = 70
+	_fx_layer.add_child(m)
+
+# ===================== CAMERA M2 =====================
+
+func get_camera_pos() -> Vector2:
+	if _camera == null:
+		return WORLD / 2.0
+	return _camera.position
+
+func set_camera_to(pos: Vector2) -> void:
+	if _camera == null:
+		return
+	_camera.position = _clamp_camera(pos)
+
+func _clamp_camera(pos: Vector2) -> Vector2:
+	var half := Vector2(640, 360) # nửa viewport 1280x720
+	var x := pos.x
+	var y := pos.y
+	if WORLD.x > 1280.0:
+		x = clampf(x, half.x, WORLD.x - half.x)
+	else:
+		x = WORLD.x / 2.0
+	if WORLD.y > 720.0:
+		y = clampf(y, half.y, WORLD.y - half.y)
+	else:
+		y = WORLD.y / 2.0
+	return Vector2(x, y)
+
+func _update_camera(delta: float) -> void:
+	if _camera == null or match_over:
+		return
+	var pan := Vector2.ZERO
+	if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP):
+		pan.y -= 1.0
+	if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN):
+		pan.y += 1.0
+	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT):
+		pan.x -= 1.0
+	if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT):
+		pan.x += 1.0
+	if pan != Vector2.ZERO:
+		set_camera_to(_camera.position + pan.normalized() * CAM_SPEED * delta)
+	# Lia bằng mép màn hình (không lia khi đang kéo khung chọn, khi ở chế độ
+	# headless/test, khi đang demo chụp ảnh, và khi chuột đang ở trên nút/minimap).
+	if _dragging or demo_mode or m2demo_mode:
+		return
+	if DisplayServer.get_name() == "headless":
+		return
+	var mp := get_viewport().get_mouse_position()
+	var hovered: Control = get_viewport().gui_get_hovered_control()
+	if hovered is Button or hovered is Minimap:
+		return
+	var e := Vector2.ZERO
+	if mp.x < EDGE_MARGIN:
+		e.x -= 1.0
+	elif mp.x > 1280.0 - EDGE_MARGIN:
+		e.x += 1.0
+	if mp.y < EDGE_MARGIN:
+		e.y -= 1.0
+	elif mp.y > 720.0 - EDGE_MARGIN:
+		e.y += 1.0
+	if e != Vector2.ZERO:
+		set_camera_to(_camera.position + e.normalized() * CAM_SPEED * delta)
+
+# ===================== CHỌN QUÂN M2 =====================
+
+func select_in_rect(rect: Rect2) -> int:
+	var list: Array = []
+	for n in get_tree().get_nodes_in_group("units"):
+		var u := n as Unit
+		if u.owner_pid == HUMAN_PID and u.is_alive() and rect.has_point(u.global_position):
+			list.append(u)
+	for n in get_tree().get_nodes_in_group("villagers"):
+		var v := n as Villager
+		if v.owner_pid == HUMAN_PID and rect.has_point(v.global_position):
+			list.append(v)
+	human_controller().set_selection(list)
+	if not list.is_empty() and _hud != null:
+		_hud.show_message("Đã chọn %d quân." % list.size())
+	return list.size()
+
+func click_select(pos: Vector2) -> void:
+	var best: Node2D = null
+	var best_d := 30.0
+	for n in get_tree().get_nodes_in_group("units"):
+		var u := n as Unit
+		if u.owner_pid != HUMAN_PID or not u.is_alive():
+			continue
+		var d := u.global_position.distance_to(pos)
+		if d < best_d:
+			best_d = d
+			best = u
+	for n in get_tree().get_nodes_in_group("villagers"):
+		var v := n as Villager
+		if v.owner_pid != HUMAN_PID:
+			continue
+		var d := v.global_position.distance_to(pos)
+		if d < best_d:
+			best_d = d
+			best = v
+	if best != null:
+		human_controller().set_selection([best])
+	else:
+		human_controller().clear_selection()
 
 # ===================== DÂN SỐ / ĐẾM =====================
 
@@ -467,8 +739,8 @@ func active_barracks(pid: int) -> Building:
 
 func rally_point(pid: int) -> Vector2:
 	var c: Vector2 = CASTLE_POS[pid]
-	var mx := 1.0 if c.x < 640.0 else -1.0
-	var my := 1.0 if c.y < 320.0 else -1.0
+	var mx := 1.0 if c.x < WORLD.x / 2.0 else -1.0
+	var my := 1.0 if c.y < WORLD.y / 2.0 else -1.0
 	return c + Vector2(mx * 88, my * 62)
 
 func nearest_resource_node(pid: int, res_type: String, from_pos: Vector2) -> Node2D:
@@ -626,18 +898,73 @@ func start_order_mode() -> void:
 	if _hud != null:
 		_hud.show_message("Bấm vào THÀNH ĐỊCH ĐÃ LỘ DIỆN để tổng tấn công, hoặc bấm 1 điểm trên map để quân đi trinh sát tới đó.")
 
+func _handle_right_click(pos: Vector2) -> void:
+	var ctrl := human_controller()
+	var sel := ctrl.get_selection()
+	if sel.is_empty():
+		if _hud != null:
+			_hud.show_message("Hãy chọn quân trước: kéo chuột trái chọn vùng, rồi click phải ra lệnh.")
+		return
+	# 1) Quân địch đang SÁNG -> tấn công (chỉ quân mới đánh được).
+	var eu := enemy_unit_at(pos, 30.0)
+	if eu != null:
+		var ordered := ctrl.order_selected_attack(eu)
+		if ordered:
+			spawn_order_marker(eu.global_position, Color(1, 0.3, 0.3))
+			if _hud != null:
+				_hud.show_message("Tấn công mục tiêu!")
+		else:
+			if _hud != null:
+				_hud.show_message("Mục tiêu chưa lộ diện — hãy cho quân trinh sát tới gần trước!")
+		return
+	# 2) Công trình địch -> tấn công (giữ luật sương mù: chưa khám phá thì từ chối).
+	var es := enemy_structure_at(pos)
+	if es != null:
+		var ordered2 := ctrl.order_selected_attack(es)
+		if ordered2:
+			spawn_order_marker(es.global_position, Color(1, 0.3, 0.3))
+			if _hud != null:
+				_hud.show_message("Tấn công mục tiêu!")
+		else:
+			if _hud != null:
+				_hud.show_message("Mục tiêu chưa lộ diện — hãy cho quân trinh sát tới gần trước!")
+		return
+	# 3) Tài nguyên -> nông dân farm đúng loại đó; quân đi tới điểm đó.
+	var node := res_node_at(pos, 36.0)
+	if node != null:
+		var n_farm := ctrl.order_selected_farm(node)
+		if n_farm > 0:
+			ctrl.order_selected_move(node.global_position, false)
+			spawn_order_marker(node.global_position, Color(0.3, 1, 0.4))
+			if _hud != null:
+				_hud.show_message("Nông dân đi farm %s." % Stats.RES_LABELS[node.res_type])
+		else:
+			if _hud != null:
+				_hud.show_message("Điểm tài nguyên chưa khám phá — hãy trinh sát trước!")
+		return
+	# 4) Đất trống -> di chuyển tới đó.
+	ctrl.order_selected_move(pos, true)
+	spawn_order_marker(pos, Color(1, 0.9, 0.3))
+	if _hud != null:
+		_hud.show_message("Quân đang di chuyển tới điểm đã chọn.")
+
 func _unhandled_input(event: InputEvent) -> void:
 	if match_over:
 		return
 	if event is InputEventMouseButton and event.pressed:
+		# Click trên HUD (panel trên/dưới, tọa độ màn hình) thì không tính là click map.
+		var screen_pos := get_viewport().get_mouse_position()
+		if screen_pos.y < 38.0 or screen_pos.y > FIELD_BOTTOM:
+			return
 		if event.button_index == MOUSE_BUTTON_RIGHT:
-			cancel_modes()
+			if placing_type != "" or awaiting_order:
+				cancel_modes()
+			else:
+				_handle_right_click(get_global_mouse_position())
 			return
 		if event.button_index != MOUSE_BUTTON_LEFT:
 			return
 		var pos := get_global_mouse_position()
-		if pos.y > FIELD_BOTTOM:
-			return
 		if placing_type != "":
 			var ok := human_controller().place_building(placing_type, pos)
 			if _hud != null:
@@ -661,8 +988,34 @@ func _unhandled_input(event: InputEvent) -> void:
 				_hud.show_message("Quân đang đi trinh sát tới điểm đã chọn.")
 			cancel_modes()
 			return
+		# M2: bắt đầu kéo khung chọn.
+		_drag_candidate = true
+		_dragging = false
+		_drag_start = pos
+		_drag_current = pos
+		return
+	if event is InputEventMouseMotion and _drag_candidate:
+		var pos := get_global_mouse_position()
+		if pos.distance_to(_drag_start) > 8.0:
+			_dragging = true
+		_drag_current = pos
+		if _dragging and _sel_overlay != null:
+			_sel_overlay.queue_redraw()
+		return
+	if event is InputEventMouseButton and not event.pressed and event.button_index == MOUSE_BUTTON_LEFT and _drag_candidate:
+		_drag_candidate = false
+		if _dragging:
+			_dragging = false
+			var rect := Rect2(_drag_start, _drag_current - _drag_start).abs()
+			select_in_rect(rect)
+			if _sel_overlay != null:
+				_sel_overlay.queue_redraw()
+		else:
+			click_select(get_global_mouse_position())
+		return
 	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
 		cancel_modes()
+		human_controller().clear_selection()
 
 # ===================== DEMO CHỤP ẢNH =====================
 
@@ -682,10 +1035,103 @@ func _take_shot(path: String) -> void:
 	img.save_png(path)
 	print("DEMO_SHOT ", path)
 
+# ===================== DEMO M2 (chạy với -- --m2demo, không bot) =====================
+# Các bước: chọn quân bằng khung -> lệnh click phải -> lia camera ->
+# panel hướng dẫn -> trinh sát giữa map rồi rút về (vùng đó chỉ còn MỜ).
+
+func _demo_m2_update(delta: float) -> void:
+	if elapsed > 300.0:
+		get_tree().quit()
+		return
+	var ctrl := human_controller()
+	match _m2demo_stage:
+		0:
+			if _hud != null:
+				_hud.close_help()
+			if military_count(0) < 1:
+				if castles[0].queue_count() < 1:
+					ctrl.queue_training(castles[0], "warrior")
+			else:
+				_m2demo_stage = 1
+		1:
+			var rect := Rect2(100, 650, 400, 300)
+			select_in_rect(rect)
+			_demo_drag_rect = rect
+			_demo_show_drag = true
+			if _sel_overlay != null:
+				_sel_overlay.queue_redraw()
+			_m2demo_timer = 0.6
+			_m2demo_stage = 2
+		2:
+			_m2demo_timer -= delta
+			if _m2demo_timer <= 0.0:
+				_take_shot("res://screenshots/m2_khung_chon.png")
+				_m2demo_stage = 3
+		3:
+			_demo_show_drag = false
+			if _sel_overlay != null:
+				_sel_overlay.queue_redraw()
+			ctrl.order_selected_move(Vector2(700, 700), true)
+			spawn_order_marker(Vector2(700, 700), Color(1, 0.9, 0.3))
+			_m2demo_timer = 0.5
+			_m2demo_stage = 4
+		4:
+			_m2demo_timer -= delta
+			if _m2demo_timer <= 0.0:
+				_take_shot("res://screenshots/m2_lenh_click_phai.png")
+				_m2demo_stage = 5
+		5:
+			set_camera_to(Vector2(1000, 500))
+			_m2demo_timer = 0.5
+			_m2demo_stage = 6
+		6:
+			_m2demo_timer -= delta
+			if _m2demo_timer <= 0.0:
+				_take_shot("res://screenshots/m2_camera.png")
+				_m2demo_stage = 7
+		7:
+			if _hud != null:
+				_hud.show_help()
+			_m2demo_timer = 0.5
+			_m2demo_stage = 8
+		8:
+			_m2demo_timer -= delta
+			if _m2demo_timer <= 0.0:
+				_take_shot("res://screenshots/m2_huong_dan.png")
+				_m2demo_stage = 9
+		9:
+			if _hud != null:
+				_hud.close_help()
+			ctrl.order_move(Vector2(960, 480))
+			_m2demo_stage = 10
+		10:
+			if (fogs[HUMAN_PID] as FogOfWar).is_explored_pos(Vector2(960, 480)):
+				ctrl.order_move(Vector2(300, 780))
+				_m2demo_stage = 11
+		11:
+			var fog: FogOfWar = fogs[HUMAN_PID]
+			if fog.state_at(Vector2(960, 480)) == 1:
+				set_camera_to(Vector2(700, 600))
+				_m2demo_timer = 0.5
+				_m2demo_stage = 12
+		12:
+			_m2demo_timer -= delta
+			if _m2demo_timer <= 0.0:
+				_take_shot("res://screenshots/m2_suong_mu_mo.png")
+				_m2demo_stage = 13
+		13:
+			get_tree().quit()
+
 # ===================== LỚP PHỦ SƯƠNG MÙ (vẽ cho người chơi) =====================
 
 class FogOverlay:
 	extends Node2D
+	# Luật hiển thị sương mù: ĐEN = chưa khám phá (alpha 1.0), MỜ = đã khám phá
+	# nhưng không còn tầm nhìn (chỉ mờ đi, KHÔNG BAO GIỜ đen lại), SÁNG = không phủ.
+	# M2: giảm alpha lớp mờ từ 0.45 xuống 0.25 — lớp 0.45 phủ lên địa hình tối
+	# nhìn gần như đen, người chơi tưởng vùng đã mở bị đen lại.
+	const DIM_COLOR := Color(0, 0, 0, 0.25)
+	const BLACK_COLOR := Color(0, 0, 0, 1.0)
 	var fog: FogOfWar = null
 
 	func set_fog(f: FogOfWar) -> void:
@@ -701,6 +1147,39 @@ class FogOverlay:
 				if fog.visible_now[i] == 1:
 					continue
 				elif fog.explored[i] == 1:
-					draw_rect(rect, Color(0, 0, 0, 0.45))
+					draw_rect(rect, DIM_COLOR)
 				else:
-					draw_rect(rect, Color(0, 0, 0, 1))
+					draw_rect(rect, BLACK_COLOR)
+
+# Khung kéo chọn quân (vẽ theo tọa độ thế giới, đi theo camera).
+class SelectionOverlay:
+	extends Node2D
+	var game: Node = null
+
+	func _draw() -> void:
+		if game == null:
+			return
+		var rect := Rect2()
+		if game._dragging:
+			rect = Rect2(game._drag_start, game._drag_current - game._drag_start).abs()
+		elif game._demo_show_drag:
+			rect = game._demo_drag_rect
+		else:
+			return
+		draw_rect(rect, Color(0.3, 1, 0.4, 0.12))
+		draw_rect(rect, Color(0.3, 1, 0.4, 0.9), false, 2.0)
+
+# Vòng dấu lệnh click phải: hiện rồi mờ dần.
+class OrderMarker:
+	extends Node2D
+	var marker_color: Color = Color(1, 0.9, 0.3)
+
+	func _ready() -> void:
+		var tw := create_tween()
+		tw.tween_interval(0.7)
+		tw.tween_property(self, "modulate:a", 0.0, 0.4)
+		tw.tween_callback(queue_free)
+
+	func _draw() -> void:
+		draw_arc(Vector2.ZERO, 22.0, 0.0, TAU, 32, marker_color, 3.0)
+		draw_arc(Vector2.ZERO, 12.0, 0.0, TAU, 24, marker_color, 2.0)

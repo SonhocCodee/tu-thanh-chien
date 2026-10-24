@@ -25,6 +25,30 @@ var _last_attacker: int = -1
 var _anim: AnimatedSprite2D
 var _cur_anim: String = ""
 
+# M2: chọn quân + lệnh trực tiếp (ưu tiên hơn thái độ chung, tới khi xong).
+var selected: bool = false
+var direct_mode: String = "" # "" | "move" | "attack_unit" | "attack_struct"
+var direct_point: Vector2 = Vector2.ZERO
+var direct_target: Node = null
+
+func set_direct_move(point: Vector2) -> void:
+	direct_mode = "move"
+	direct_point = point
+	direct_target = null
+
+func set_direct_attack(target: Node) -> void:
+	if target is Unit:
+		direct_mode = "attack_unit"
+	elif target is Structure:
+		direct_mode = "attack_struct"
+	else:
+		return
+	direct_target = target
+
+func clear_direct() -> void:
+	direct_mode = ""
+	direct_target = null
+
 func setup(p_owner: int, p_type: String, p_color: String, p_main: Node, p_slot: Vector2) -> void:
 	owner_pid = p_owner
 	unit_type = p_type
@@ -109,6 +133,32 @@ func _process(delta: float) -> void:
 		_play("idle")
 		return
 	var home_castle: Castle = main_ref.castles[owner_pid]
+
+	# 0) M2: lệnh trực tiếp ưu tiên hơn thái độ chung.
+	if direct_mode == "attack_unit" or direct_mode == "attack_struct":
+		var t := direct_target
+		var dead_target := t == null or not is_instance_valid(t) \
+			or (t is Unit and not (t as Unit).is_alive()) \
+			or (t is Structure and not (t as Structure).is_alive())
+		if dead_target:
+			clear_direct()
+		else:
+			if t is Unit:
+				_combat_unit(t as Unit, delta)
+			else:
+				_combat_structure(t as Structure, delta)
+			_separate(delta)
+			queue_redraw()
+			return
+	if direct_mode == "move":
+		if global_position.distance_to(direct_point) > 16.0:
+			_move_toward(direct_point + slot_offset * 0.5, delta)
+		else:
+			_play("idle")
+			clear_direct()
+		_separate(delta)
+		queue_redraw()
+		return
 
 	# 1) Địch (quân) trong tầm phát hiện -> đánh trước.
 	var enemy := _find_enemy_unit(float(st["detect_range"]))
@@ -244,6 +294,8 @@ func _face(to: Vector2) -> void:
 func _draw() -> void:
 	if _dead:
 		return
+	if selected:
+		draw_arc(Vector2.ZERO, 30.0, 0.0, TAU, 32, Color(0.3, 1, 0.4, 0.95), 3.0)
 	var w := 34.0
 	var pos := Vector2(-w / 2.0, -58.0)
 	draw_rect(Rect2(pos, Vector2(w, 5)), Color(0, 0, 0, 0.65))

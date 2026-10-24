@@ -100,8 +100,8 @@ func _run() -> void:
 	var army: int = g.military_count(0)
 	# Chưa lộ diện thì lệnh tấn công đích danh phải bị từ chối.
 	var rejected: bool = not ctrl0.set_stance("attack", 2)
-	# Trinh sát tới gần thành Đỏ qua API di chuyển.
-	ctrl0.order_move(Vector2(985, 215))
+	# Trinh sát tới gần thành Đỏ qua API di chuyển (map M2: thành Đỏ ở (1700, 180)).
+	ctrl0.order_move(Vector2(1620, 220))
 	t = 0.0
 	while t < 400.0 and not g.is_castle_revealed_for(0, 2) and g.get_player(2).alive:
 		await _wait(2.0)
@@ -138,8 +138,8 @@ func _run() -> void:
 	g = await _new_game(false, 20.0)
 	await _wait(0.6)
 	var fog0: FogOfWar = g.fogs[0]
-	var center_state: int = fog0.state_at(Vector2(640, 305))
-	var home_state: int = fog0.state_at(Vector2(180, 470))
+	var center_state: int = fog0.state_at(Vector2(960, 480))
+	var home_state: int = fog0.state_at(Vector2(220, 780))
 	_check("fa", center_state == 0 and home_state == 2,
 		"ô giữa map=%d (0=ĐEN), ô quanh thành nhà=%d (2=SÁNG)" % [center_state, home_state])
 
@@ -152,18 +152,18 @@ func _run() -> void:
 	while t < 120.0 and g.military_count(0) < 1:
 		await _wait(1.0)
 		t += 1.0
-	ctrl0.order_move(Vector2(640, 305))
+	ctrl0.order_move(Vector2(960, 480))
 	t = 0.0
-	while t < 200.0 and not fog0.is_explored_pos(Vector2(640, 305)):
+	while t < 200.0 and not fog0.is_explored_pos(Vector2(960, 480)):
 		await _wait(1.0)
 		t += 1.0
-	_check("fb", fog0.is_explored_pos(Vector2(640, 305)),
-		"sau %.0fs: ô giữa map đã khám phá, trạng thái hiện tại=%d (1=MỜ/2=SÁNG)" % [t, fog0.state_at(Vector2(640, 305))])
+	_check("fb", fog0.is_explored_pos(Vector2(960, 480)),
+		"sau %.0fs: ô giữa map đã khám phá, trạng thái hiện tại=%d (1=MỜ/2=SÁNG)" % [t, fog0.state_at(Vector2(960, 480))])
 
 	# ============ fc) Quân địch trong vùng MỜ không hiển thị, vùng SÁNG thì hiện ============
 	ctrl0.set_stance("hold")
 	t = 0.0
-	while t < 200.0 and fog0.state_at(Vector2(640, 305)) != 1:
+	while t < 200.0 and fog0.state_at(Vector2(960, 480)) != 1:
 		await _wait(1.0)
 		t += 1.0
 	var p2 = g.get_player(2)
@@ -182,10 +182,10 @@ func _run() -> void:
 	var hidden_ok := false
 	var shown_ok := false
 	if enemy_unit != null:
-		enemy_unit.global_position = Vector2(640, 305) # vùng MỜ của người chơi
+		enemy_unit.global_position = Vector2(960, 480) # vùng MỜ của người chơi
 		await _wait(0.8)
 		hidden_ok = not enemy_unit.visible
-		enemy_unit.global_position = Vector2(330, 470) # vùng SÁNG cạnh thành người chơi
+		enemy_unit.global_position = Vector2(330, 780) # vùng SÁNG cạnh thành người chơi
 		await _wait(0.8)
 		shown_ok = enemy_unit.visible
 	_check("fc", hidden_ok and shown_ok,

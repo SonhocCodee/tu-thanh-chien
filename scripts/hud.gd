@@ -23,6 +23,8 @@ var _castle_queue_label: Label
 var _barracks_queue_label: Label
 var _end_panel: Panel = null
 var _msg_timer: float = 0.0
+var _help_panel: Panel = null
+var _sel_label: Label = null
 
 func setup(p_game: Node, p_ctrl: PlayerController) -> void:
 	game = p_game
@@ -44,6 +46,10 @@ func _ready() -> void:
 	_msg_label.add_theme_constant_override("shadow_offset_x", 1)
 	_msg_label.add_theme_constant_override("shadow_offset_y", 1)
 
+	# --- Nút Trợ giúp (thanh trên) ---
+	var help_btn := _mk_button(top, Vector2(1150, 5), Vector2(110, 28), "Trợ giúp")
+	help_btn.pressed.connect(show_help)
+
 	# --- Minimap góc phải trên ---
 	var mm := Minimap.new()
 	mm.game = game
@@ -55,6 +61,35 @@ func _ready() -> void:
 	mm_title.position = Vector2(1068, 146)
 	mm_title.add_theme_font_size_override("font_size", 12)
 	add_child(mm_title)
+	_sel_label = _mk_label(self, Vector2(1068, 164), 13)
+	_sel_label.add_theme_color_override("font_color", Color(0.5, 1, 0.6))
+
+	# --- Panel hướng dẫn M2 (tự mở khi vào trận, tắt/mở lại được) ---
+	_help_panel = Panel.new()
+	_help_panel.position = Vector2(340, 150)
+	_help_panel.size = Vector2(600, 400)
+	_help_panel.visible = false
+	add_child(_help_panel)
+	var help_title := _mk_label(_help_panel, Vector2(20, 12), 18)
+	help_title.text = "HƯỚNG DẪN ĐIỀU KHIỂN"
+	help_title.add_theme_color_override("font_color", Color(1, 0.85, 0.5))
+	var help_body := _mk_label(_help_panel, Vector2(20, 44), 14)
+	help_body.size = Vector2(560, 300)
+	help_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	help_body.text = "\n".join([
+		"KÉO CHUỘT TRÁI: chọn quân trong khung (vòng xanh = đã chọn).",
+		"CLICK TRÁI 1 đơn vị: chọn riêng nó. Bấm đất trống / quân địch: bỏ chọn.",
+		"CLICK PHẢI ĐẤT TRỐNG: quân đã chọn di chuyển tới đó.",
+		"CLICK PHẢI CÂY/MỎ: nông dân đã chọn đi farm đúng loại đó.",
+		"CLICK PHẢI QUÂN/CÔNG TRÌNH ĐỊCH: tấn công (chỉ mục tiêu đã lộ diện — chưa lộ thì game từ chối, cần trinh sát trước).",
+		"LIA CAMERA: đưa chuột ra mép màn hình, phím WASD / mũi tên, hoặc bấm vào bản đồ nhỏ.",
+		"PHÂN BỔ: nút +/- chia nông dân farm gỗ/đá/vàng (lệnh click phải ưu tiên hơn phân bổ).",
+		"XÂY: bấm nút công trình rồi bấm vào vùng sáng quanh thành. LUYỆN QUÂN: nút ở thành/doanh trại.",
+		"THÁI ĐỘ: GIỮ NHÀ (quân ở nhà thủ) / TỔNG TẤN CÔNG (đánh thành địch đã lộ diện).",
+		"SƯƠNG MÙ: đen = chưa khám phá, mờ = đã qua (chỉ mờ đi, không đen lại), sáng = đang nhìn thấy.",
+	])
+	var help_close := _mk_button(_help_panel, Vector2(240, 350), Vector2(120, 36), "Đã hiểu")
+	help_close.pressed.connect(close_help)
 
 	# --- Panel dưới ---
 	var bottom := Panel.new()
@@ -148,6 +183,14 @@ func show_message(text: String) -> void:
 	_msg_label.text = text
 	_msg_timer = 6.0
 
+func show_help() -> void:
+	if _help_panel != null:
+		_help_panel.visible = true
+
+func close_help() -> void:
+	if _help_panel != null:
+		_help_panel.visible = false
+
 func _on_alloc(res_key: String, delta_sign: int) -> void:
 	var p := ctrl.player
 	var a := {"wood": int(p.allocation["wood"]), "stone": int(p.allocation["stone"]), "gold": int(p.allocation["gold"])}
@@ -167,6 +210,9 @@ func _process(delta: float) -> void:
 	var p := ctrl.player
 	_res_label.text = "Gỗ: %d    Đá: %d    Vàng: %d" % [int(p.resources["wood"]), int(p.resources["stone"]), int(p.resources["gold"])]
 	_pop_label.text = "Dân số: %d/%d" % [game.pop_used(0), game.pop_cap(0)]
+	if _sel_label != null:
+		var n_sel := ctrl.get_selection().size()
+		_sel_label.text = "Đã chọn: %d" % n_sel if n_sel > 0 else ""
 	var t := int(game.elapsed)
 	_clock_label.text = "Thời gian: %02d:%02d" % [t / 60, t % 60]
 	_stance_label.text = "Thái độ quân: %s" % ("GIỮ NHÀ" if p.stance == "hold" else ("TỔNG TẤN CÔNG" if p.stance == "attack" else "TRINH SÁT"))

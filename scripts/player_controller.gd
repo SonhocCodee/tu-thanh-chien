@@ -52,6 +52,106 @@ func order_move(point: Vector2) -> bool:
 		return false
 	return game.exec_order_move(player, point)
 
+# ===================== M2: CHỌN QUÂN + LỆNH TRỰC TIẾP =====================
+# Selection là trạng thái của "nguồn lệnh" này (bot không dùng, nhưng vẫn
+# nằm chung cửa để sau này người qua mạng cắm chung). Mọi lệnh trực tiếp
+# đều đi qua Main (lớp thực thi) như mọi lệnh cũ.
+
+var selected: Array = [] # Array[Node] (Unit/Villager của player này)
+
+func _prune_selection() -> void:
+	var kept: Array = []
+	for n in selected:
+		if n == null or not is_instance_valid(n):
+			continue
+		if n is Unit and not (n as Unit).is_alive():
+			continue
+		kept.append(n)
+	selected = kept
+
+func set_selection(units: Array) -> void:
+	for n in selected:
+		if n != null and is_instance_valid(n):
+			if n is Unit:
+				(n as Unit).selected = false
+				(n as Unit).queue_redraw()
+			elif n is Villager:
+				(n as Villager).selected = false
+				(n as Villager).queue_redraw()
+	selected = []
+	for n in units:
+		if n == null or not is_instance_valid(n):
+			continue
+		if n is Unit:
+			var u := n as Unit
+			if u.owner_pid != player.pid or not u.is_alive():
+				continue
+			u.selected = true
+			u.queue_redraw()
+			selected.append(u)
+		elif n is Villager:
+			var v := n as Villager
+			if v.owner_pid != player.pid:
+				continue
+			v.selected = true
+			v.queue_redraw()
+			selected.append(v)
+
+func clear_selection() -> void:
+	set_selection([])
+
+func get_selection() -> Array:
+	_prune_selection()
+	return selected.duplicate()
+
+func _selected_military() -> Array:
+	var out: Array = []
+	for n in get_selection():
+		if n is Unit:
+			out.append(n)
+	return out
+
+func _selected_villagers() -> Array:
+	var out: Array = []
+	for n in get_selection():
+		if n is Villager:
+			out.append(n)
+	return out
+
+func order_selected_move(point: Vector2, include_villagers: bool) -> int:
+	if player == null or not player.alive:
+		return 0
+	var count := 0
+	for u in _selected_military():
+		if game.exec_direct_move(player, u, point):
+			count += 1
+	if include_villagers:
+		for v in _selected_villagers():
+			if game.exec_villager_move(player, v, point):
+				count += 1
+	return count
+
+func order_selected_farm(node: Node2D) -> int:
+	if player == null or not player.alive:
+		return 0
+	var count := 0
+	for v in _selected_villagers():
+		if game.exec_direct_farm(player, v, node):
+			count += 1
+	return count
+
+func order_selected_attack(target: Node) -> bool:
+	if player == null or not player.alive:
+		return false
+	var mil := _selected_military()
+	if mil.is_empty():
+		return false
+	var any := false
+	for u in mil:
+		if game.exec_direct_attack(player, u, target):
+			any = true
+	return any
+
 func is_castle_revealed(target_player_id: int) -> bool:
 	if game == null or player == null:
 		return false

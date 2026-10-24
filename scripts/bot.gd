@@ -17,6 +17,7 @@ var _rng := RandomNumberGenerator.new()
 var _last_castle_hp: float = -1.0
 var _threatened: bool = false
 var _scout_wait: float = 20.0
+var _scout_elapsed: float = 0.0
 
 func setup(p_ctrl: PlayerController, p_game: Node) -> void:
 	ctrl = p_ctrl
@@ -31,10 +32,24 @@ func _process(delta: float) -> void:
 		return
 	_timer -= delta
 	_scout_wait -= delta
+	_scout_elapsed += delta
 	if _timer > 0.0:
 		return
 	_timer = float(Stats.BOT["decision_interval"])
 	_decide()
+
+## Quân trinh sát đã tới điểm hẹn chưa (hoặc đã bị diệt hết dọc đường).
+func _scout_arrived() -> bool:
+	var mp: Vector2 = player.move_point
+	var total := 0
+	var near := 0
+	for n in game.get_tree().get_nodes_in_group("units"):
+		var u := n as Unit
+		if u.owner_pid == player.pid and u.is_alive():
+			total += 1
+			if u.global_position.distance_to(mp) < 150.0:
+				near += 1
+	return total == 0 or near == total
 
 func _decide() -> void:
 	var castle: Castle = game.castles[player.pid]
@@ -98,8 +113,18 @@ func _decide() -> void:
 	if known.is_empty():
 		# Chưa lộ diện thành nào: cử quân đi mở map về hướng góc của 1 phe địch
 		# (hướng góc là luật map công khai; vị trí thành chỉ khoá sau khi thấy).
+		if player.stance == "move":
+			# Quân đã tới nơi mà vẫn chưa lộ diện, hoặc đi quá 120s sim mà
+			# chưa tới (kẹt đánh nhau, mục tiêu chết dọc đường...): cho về
+			# giữ nhà để trinh sát lại, tránh kẹt stance "move" với quân đỗ
+			# tại chỗ mãi như trên map lớn M2.
+			if _scout_arrived() or _scout_elapsed > 120.0:
+				ctrl.set_stance("hold")
+				_scout_wait = 5.0
+			return
 		if military >= 2 and player.stance == "hold" and _scout_wait <= 0.0:
 			_scout_wait = 25.0
+			_scout_elapsed = 0.0
 			var others: Array = []
 			for p in game.players:
 				if p.pid != player.pid and p.alive:
@@ -107,7 +132,13 @@ func _decide() -> void:
 			if not others.is_empty():
 				var dest_pid: int = others[_rng.randi_range(0, others.size() - 1)]
 				var dest: Vector2 = game.public_castle_pos(dest_pid)
-				var mid := castle.global_position.lerp(dest, 0.82)
+				# Dừng cách thành địch 140px: trong tầm nhìn (kiếm 165 /
+				# cung 195) nên tới nơi là lộ diện thành. Cách cũ lerp 0.82
+				# trên map lớn M2 để quân cách thành xa 266-288px (ngoài tầm
+				# nhìn lẫn tầm phát hiện) nên quân đỗ tại chỗ, không lộ diện,
+				# không trinh sát lại, không bao giờ tổng tấn công.
+				var dir := (castle.global_position - dest).normalized()
+				var mid := dest + dir * 140.0
 				ctrl.order_move(mid)
 		return
 	if player.stance == "move":
