@@ -305,7 +305,20 @@ func _find_best_enemy_unit(range_px: float, player: PlayerState) -> Unit:
 	var hp_bias := float(Stats.UNIT_AI["target_hp_bias"])
 	var type_bias: Dictionary = Stats.UNIT_AI["target_type_bias"]
 	var sticky := float(Stats.UNIT_AI["target_stickiness"])
+	var focus_penalty := float(Stats.UNIT_AI.get("target_focus_penalty", 0.0))
 	var atk_range := float(st["attack_range"])
+	# Đếm trước số đồng minh đang nhắm từng địch (bản đồ instance_id -> số
+	# người nhắm) để cộng phạt CHIA LỬA bên dưới — quét 1 lần, không lồng vòng.
+	var focus_count := {}
+	if focus_penalty > 0.0:
+		for an in get_tree().get_nodes_in_group("units"):
+			var au := an as Unit
+			if au == null or au == self or au.owner_pid != owner_pid or not au.is_alive():
+				continue
+			var at := au._target_unit
+			if at != null and is_instance_valid(at):
+				var key := at.get_instance_id()
+				focus_count[key] = int(focus_count.get(key, 0)) + 1
 	var best: Unit = null
 	var best_score := INF
 	for n in get_tree().get_nodes_in_group("units"):
@@ -320,7 +333,8 @@ func _find_best_enemy_unit(range_px: float, player: PlayerState) -> Unit:
 		if leash_r >= 0.0 and u.global_position.distance_to(anchor) > leash_r + atk_range:
 			continue
 		var score := d + hp_bias * clampf(u.hp / u.max_hp, 0.0, 1.0) \
-			+ float(type_bias.get(u.unit_type, 0.0))
+			+ float(type_bias.get(u.unit_type, 0.0)) \
+			+ focus_penalty * float(focus_count.get(u.get_instance_id(), 0))
 		if u == _target_unit:
 			score -= sticky
 		if score < best_score:
@@ -362,7 +376,10 @@ func _kite_away(from_pos: Vector2, delta: float, player: PlayerState) -> void:
 	if dir.length() < 0.01:
 		dir = Vector2.RIGHT
 	dir = dir.normalized()
-	var dest := global_position + dir * float(st["speed"]) * delta
+	# Vừa lùi vừa bắn thì lùi CHẬM hơn hẳn tốc độ thường (kite phải trả giá —
+	# xem Stats.UNIT_AI.archer_kite_speed_factor): địch nhanh hơn sẽ áp sát được.
+	var kite_factor := float(Stats.UNIT_AI.get("archer_kite_speed_factor", 1.0))
+	var dest := global_position + dir * float(st["speed"]) * kite_factor * delta
 	# Hết đất lùi (chạm vòng leash) thì đứng lại bắn, không lùi khỏi khu vực giữ.
 	if player != null:
 		var lz := _leash(player)
