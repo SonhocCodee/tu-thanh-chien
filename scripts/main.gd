@@ -112,8 +112,77 @@ var _hud: CanvasLayer = null
 var _demo_shot_stage: int = 0
 var _arrow_textures: Dictionary = {}
 
+# ===================== M3 LAN — ĐIỂM MÓC MẠNG =====================
+# Toàn bộ code mạng nằm ở thư mục net/ (NetSession/NetServer/NetClient...).
+# Main chỉ mở các điểm móc tối thiểu dưới đây; net_role == "" = chơi đơn,
+# HÀNH VI KHÔNG ĐỔI (mọi test cũ phải xanh nguyên).
+#   "server": tiến trình chủ nhà — chạy sim thật, không HUD; trận bị giữ
+#             đứng yên (match_over = true) cho tới khi phòng chờ bấm Bắt đầu.
+#   "client": bản gương — KHÔNG dựng thực thể thật, không mô phỏng;
+#             NetClient dựng hình từ snapshot lọc sương mù của server.
+var net_role: String = ""
+var net_params: Dictionary = {}
+var net_winner_pid: int = -1 # server mạng tự tính khi trận kết thúc
+var _net_id_by_instance: Dictionary = {} # instance_id -> net_id
+var _net_node_by_id: Dictionary = {} # net_id -> instance_id (KHÔNG giữ Node: gán instance đã freed vào biến có kiểu sẽ nổ lỗi runtime — tra qua instance_from_id)
+var _next_net_id: int = NetProtocol.FIRST_DYNAMIC_ID
+
+const NetSessionScript := preload("res://net/net_session.gd")
+
+## net_id nguyên DUY NHẤT cho mọi thực thể (INTEGRATION.md bước 1).
+## Thành của slot s luôn là s + 1 (client tự suy ra được). Id còn lại cấp
+## lười ở lần đầu được hỏi — chỉ server gọi hàm này; client không bao giờ
+## tự cấp id. API exec_* giữ nguyên chữ ký node như cũ.
+func net_id_of(node: Node) -> int:
+	if node == null or not is_instance_valid(node):
+		return 0
+	if node is Castle:
+		var cid := (node as Castle).owner_pid + 1
+		_net_node_by_id[cid] = node.get_instance_id()
+		return cid
+	var key := node.get_instance_id()
+	if _net_id_by_instance.has(key):
+		return int(_net_id_by_instance[key])
+	var id := _next_net_id
+	_next_net_id += 1
+	_net_id_by_instance[key] = id
+	_net_node_by_id[id] = key
+	return id
+
+func node_by_net_id(id: int) -> Node:
+	if id >= 1 and id <= 4 and castles.has(id - 1):
+		return castles[id - 1]
+	var inst := int(_net_node_by_id.get(id, 0))
+	if inst == 0:
+		return null
+	return instance_from_id(inst) as Node
+
 func _ready() -> void:
 	_rng.randomize()
+	# M3 LAN: xác định vai mạng TRƯỚC khi dựng thế giới (client không được
+	# dựng thực thể thật). Native: tham số sau "--" (--netrole=server|client
+	# kèm --port/--url/--name/...). Web: mở bằng ?lan=1 từ gói chủ nhà thì tự
+	# vào vai client, nối ws về đúng host đã phục vụ trang.
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--"):
+			var kv := a.substr(2).split("=", true, 1)
+			if kv.size() == 2:
+				net_params[kv[0]] = kv[1]
+			else:
+				net_params[kv[0]] = "true"
+	if net_params.has("netrole"):
+		net_role = String(net_params["netrole"])
+	elif OS.has_feature("web"):
+		var loc := String(JavaScriptBridge.eval("window.location.search + '|' + window.location.hostname", true))
+		var parts := loc.split("|")
+		if parts.size() == 2 and parts[0].contains("lan=1"):
+			net_role = "client"
+			net_params["url"] = "ws://%s:%d" % [parts[1], NetProtocol.PORT]
+	if net_role == "server":
+		bots_enabled = false # bot mạng chỉ sinh khi trận bắt đầu (spawn_bots_for)
+		match_over = true # giữ sim đứng yên trong lúc phòng chờ
+	elif net_role == "client":
+		bots_enabled = false
 	var args := OS.get_cmdline_user_args()
 	if "--demo" in args:
 		demo_mode = true
@@ -141,14 +210,24 @@ func _ready() -> void:
 		Engine.time_scale = 3.0
 	_build_players()
 	_build_map()
-	_build_resource_nodes()
-	_build_sheep()
-	_build_castles()
-	_build_start_villagers()
+	# M3 LAN: client là BẢN GƯƠNG — không dựng thực thể thật/tài nguyên/cừu
+	# (server là nơi duy nhất giữ sự thật; client nhận qua snapshot).
+	if net_role != "client":
+		_build_resource_nodes()
+		_build_sheep()
+		_build_castles()
+		_build_start_villagers()
 	_build_fog()
 	_build_bots()
-	_build_hud()
+	# M3 LAN: server không cần HUD; client dùng NetHud riêng của NetClient.
+	if net_role == "":
+		_build_hud()
 	_update_fog()
+	# M3 LAN: gắn hub mạng (node con "NetSession" — cùng đường dẫn mọi peer).
+	if net_role != "":
+		var session := NetSessionScript.new()
+		session.name = "NetSession"
+		add_child(session)
 	if demo_mode:
 		# Sân khấu demo (chỉ để chụp ảnh kiểm chứng): cấp thêm tài nguyên cho mọi phe.
 		for p in players:
@@ -761,14 +840,27 @@ func _build_fog() -> void:
 func _build_bots() -> void:
 	if not bots_enabled:
 		return
+	# M3 LAN: ở chế độ mạng, bot KHÔNG sinh lúc dựng trận — NetServer gọi
+	# spawn_bots_for() đúng lúc bắt đầu trận cho các slot trống/rớt mạng.
+	if net_role != "":
+		return
 	for pid in CASTLE_POS.keys():
 		if pid == HUMAN_PID and not demo_mode:
 			continue
-		var bot := Bot.new()
-		bot.setup(controllers[pid], self)
-		if bot_attack_size_override > 0:
-			bot.attack_army_size = bot_attack_size_override
-		add_child(bot)
+		_add_bot(pid)
+
+func _add_bot(pid: int) -> void:
+	var bot := Bot.new()
+	bot.setup(controllers[pid], self)
+	if bot_attack_size_override > 0:
+		bot.attack_army_size = bot_attack_size_override
+	add_child(bot)
+
+## M3 LAN: NetServer gọi khi bắt đầu trận / khi 1 slot quá hạn nối lại —
+## bot tiếp quản các slot đó qua đúng PlayerController như mọi nguồn lệnh.
+func spawn_bots_for(pids: Array) -> void:
+	for pid in pids:
+		_add_bot(int(pid))
 
 func _build_hud() -> void:
 	_hud = Hud.new()
@@ -781,6 +873,11 @@ func _build_hud() -> void:
 # ===================== SƯƠNG MÙ =====================
 
 func _update_fog() -> void:
+	# M3 LAN: phía client, sương mù hiển thị do NetClient tự đồng bộ (lưới
+	# explored từ server + visible tính từ quân nhà trong gương) — hàm này
+	# là đường hiển thị của máy giữ sự thật (chơi đơn + server), client bỏ qua.
+	if net_role == "client":
+		return
 	var vision: Dictionary = Stats.FOG["vision"]
 	for pid in fogs.keys():
 		var fog: FogOfWar = fogs[pid]
@@ -1846,6 +1943,18 @@ func _eliminate_player(pid: int) -> void:
 		if p.alive and p.target_pid == pid:
 			p.stance = "hold"
 			p.target_pid = -1
+	# M3 LAN: phía server mạng, thắng/thua tính theo số phe CÒN SỐNG (không
+	# theo HUMAN_PID như chơi đơn), không pause cây, không HUD — NetServer
+	# theo dõi match_over + net_winner_pid để phát match_ended cho mọi client.
+	if net_role == "server":
+		var alive_left: Array = []
+		for p in players:
+			if p.alive:
+				alive_left.append(p.pid)
+		if alive_left.size() <= 1:
+			match_over = true
+			net_winner_pid = int(alive_left[0]) if alive_left.size() == 1 else -1
+		return
 	# Thắng/thua.
 	if pid == HUMAN_PID:
 		_end_match(false)
@@ -2221,6 +2330,11 @@ func _handle_right_click(pos: Vector2) -> void:
 		_hud.show_message("Quân đang di chuyển tới điểm đã chọn.")
 
 func _unhandled_input(event: InputEvent) -> void:
+	# M3 LAN: phía client, input trên map do NetClient xử lý (ra lệnh qua
+	# NetController) — đường input chơi đơn này phải đứng ngoài hoàn toàn,
+	# nếu không click sẽ sinh công trình "ma" ở máy client.
+	if net_role == "client":
+		return
 	if match_over:
 		return
 	if event is InputEventMouseButton and event.pressed:

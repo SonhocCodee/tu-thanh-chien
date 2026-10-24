@@ -2,3 +2,6 @@ tools_bin/
 build/
 .godot/
 *.import
+
+reports/
+host/goi-chu-nha/
