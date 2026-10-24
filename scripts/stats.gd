@@ -60,6 +60,28 @@ const UNITS := {
 		"bounty": 0,
 		"projectile_speed": 0.0,
 	},
+	# Tu Sĩ — quân HỖ TRỢ thuần (vai Monk của Đế Chế, KHÔNG dụ hàng đợt
+	# này): KHÔNG có khoá "damage" = không tấn công được ai. Hồi máu cho
+	# QUÂN đồng minh (Unit: kiếm/cung/giáo/tu sĩ khác) — KHÔNG hồi công
+	# trình, KHÔNG hồi nông dân, KHÔNG tự hồi chính mình. heal_amount =
+	# máu hồi mỗi nhịp heal_interval giây khi mục tiêu trong heal_range:
+	# 12 HP/s ~ triệt tiêu vừa đúng DPS của 1 kiếm sĩ (14/0,9s ~ 15,6)
+	# dồn vào 1 mục tiêu, không phá cân bằng tuyến đầu.
+	"monk": {
+		"label": "Tu Sĩ",
+		"hp": 60.0,
+		"speed": 60.0,
+		"attack_range": 0.0,
+		"detect_range": 150.0,
+		"attack_cooldown": 1.0,
+		"damage_type": "vat_ly",
+		"armor_type": "nhe",
+		"bounty": 0,
+		"projectile_speed": 0.0,
+		"heal_amount": 12.0,
+		"heal_interval": 1.0,
+		"heal_range": 120.0,
+	},
 }
 
 # --- Huấn luyện: giá tài nguyên + thời gian, theo từng đơn vị ---
@@ -74,10 +96,15 @@ const TRAINING := {
 	# Lính giáo: giá ~1,9 lần kiếm sĩ (150 vàng + 30 gỗ), luyện 16s ở
 	# doanh trại (tốc độ 1,4 -> ~11,4s thực). Chỉ cần Doanh trại + còn ô.
 	"lancer": {"cost": {"gold": 150, "wood": 30}, "time": 16.0, "pop_cost": 2, "military": true},
+	# Tu Sĩ: 100 vàng, luyện 20s tại THÀNH CHÍNH (xem PRODUCERS.castle —
+	# sprite Monastery của pack đang là KHO VÀNG nên không có nhà riêng
+	# phân biệt được; Update 010 không có Monastery nào khác). Tính như
+	# quân thường: 1 ô dân + 1 ô quân qua đúng hệ pop/army cap hiện có.
+	"monk": {"cost": {"gold": 100}, "time": 20.0, "pop_cost": 1, "military": true},
 }
 # Nơi sản xuất đẻ được quân gì; barracks_speed = hệ số tốc độ huấn luyện ở doanh trại (>1 = nhanh hơn).
 const PRODUCERS := {
-	"castle": {"units": ["pawn", "warrior"], "speed": 1.0},
+	"castle": {"units": ["pawn", "warrior", "monk"], "speed": 1.0},
 	"barracks": {"units": ["warrior", "archer", "lancer"], "speed": 1.4},
 }
 
@@ -229,7 +256,7 @@ const SHEEP := {
 const UNIT_AI := {
 	"think_interval": 0.18, # nhịp tái chọn mục tiêu (giây), lệch pha theo từng quân
 	"target_hp_bias": 150.0, # địch đầy máu +150 điểm ~ tương đương 150px xa hơn
-	"target_type_bias": {"warrior": 0.0, "archer": -40.0}, # cung thủ: nguy hiểm + máu mỏng -> diệt trước
+	"target_type_bias": {"warrior": 0.0, "archer": -40.0, "monk": 20.0}, # cung thủ: nguy hiểm + máu mỏng -> diệt trước; tu sĩ: không đe doạ trực tiếp -> ưu tiên thấp hơn tuyến đầu
 	"target_stickiness": 30.0,
 	"leash_hold": 400.0, # giữ nhà: không đuổi địch quá bán kính này tính từ THÀNH
 	"leash_move": 300.0, # đi trinh sát: không đuổi quá bán kính này tính từ ĐIỂM ĐƯỢC LỆNH
@@ -246,6 +273,22 @@ const VILLAGER_AI := {
 	"flee_safe_distance": 84.0, # về tới gần kho chừng này thì coi như an toàn
 	"flee_max_time": 6.0, # quá hạn chót này thì quay lại việc dù chưa về tới kho
 	"threat_check_interval": 0.15, # nhịp quét nguy hiểm (giây), lệch pha từng nông dân
+}
+
+# --- AI Tu Sĩ (unit.gd, nhánh _process_monk): đi theo đội + chữa + bỏ chạy ---
+# Tu sĩ bám sau lưng quân CHIẾN ĐẤU gần nhất (kiếm/cung/giáo), giữ khoảng
+# follow_distance; đồng minh bị thương ngoài tầm chữa nhưng trong
+# seek_radius thì chủ động tới gần (chỉ đi về phía QUÂN MÌNH — vị trí phe
+# mình luôn rõ nên không phá cổng sương mù, không tự khám phá vùng đen).
+# Bị địch áp sát như nông dân thì bỏ chạy về thành (ngưỡng mượn VILLAGER_AI).
+const MONK_AI := {
+	"follow_distance": 72.0, # giữ cách quân chiến đấu gần nhất chừng này
+	"seek_radius": 300.0, # đồng minh bị thương trong bán kính này -> tới chữa
+	"flee_trigger_range": 56.0, # địch áp sát trong bán kính này -> bỏ chạy
+	"flee_safe_distance": 84.0, # về gần thành chừng này + hết giờ hoảng = an toàn
+	"flee_time": 2.5, # thời gian hoảng tối thiểu mỗi lần bỏ chạy
+	"flee_max_time": 6.0, # quá hạn này thì thôi chạy, quay lại việc
+	"threat_check_interval": 0.15, # nhịp quét nguy hiểm, lệch pha từng tu sĩ
 }
 
 # --- Thú trung lập: cừu (animal_ai.gd / sheep.gd / herd_keeper.gd) ---
@@ -290,6 +333,7 @@ const FOG := {
 		"archer": 195.0,
 		"warrior": 165.0,
 		"lancer": 185.0,
+		"monk": 150.0,
 		"pawn": 120.0,
 	},
 }
@@ -300,6 +344,16 @@ const BOT := {
 	"villager_target": 6,
 	"attack_army_size": 8,
 	"threat_radius": 290.0,
+	# Tu Sĩ: đạo quân đạt monk_min_army Ô QUÂN thì luyện 1 tu sĩ tại thành;
+	# đạt monk_second_army ô thì thêm tu sĩ thứ 2 (trần monk_max).
+	# monk_min_army = 7 (không phải 8 như đề xuất ban đầu): ngưỡng tổng
+	# tấn công cũng là 8 ô — chờ chạm 8 mới luyện thì đạo quân đã xuất
+	# kích và tan trong <60s, vàng không tích kịp 100 (đã soi 5 trận bot:
+	# 0 lần xếp hàng). Luyện ở ô thứ 7 = tu sĩ chiếm Ô CUỐI của đạo quân
+	# xuất kích, ra quân sau 20s rồi tự bám theo đạo — đúng vai trò.
+	"monk_min_army": 7,
+	"monk_second_army": 12,
+	"monk_max": 2,
 }
 
 const RES_KEYS: Array[String] = ["wood", "stone", "gold", "meat"]

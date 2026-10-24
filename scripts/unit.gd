@@ -39,6 +39,15 @@ var _target_struct: Structure = null
 var _sep_left: float = 0.0
 var _sep_push: Vector2 = Vector2.ZERO
 
+# --- Tu Sĩ (unit_type == "monk"): không tấn công — chữa trị + đi theo đội
+# + bỏ chạy. State riêng để nhánh _process_monk không đụng logic chiến đấu.
+var _heal_left: float = 0.0
+var _heal_target: Unit = null
+var _heal_fx: AnimatedSprite2D = null
+var _fleeing: bool = false
+var _flee_left: float = 0.0
+var _threat_left: float = 0.0
+
 ## Mục tiêu AI hiện tại (phục vụ test + tích hợp/debug).
 func current_target() -> Node:
 	if direct_target != null and is_instance_valid(direct_target):
@@ -91,6 +100,19 @@ func _ready() -> void:
 	_anim.sprite_frames = _build_frames()
 	add_child(_anim)
 	_play("idle")
+	if unit_type == "monk":
+		# Hiệu ứng chữa của pack (Heal_Effect): node top_level để đặt đè
+		# đúng vị trí MỤC TIÊU đang được chữa, không dính theo tu sĩ.
+		_heal_fx = AnimatedSprite2D.new()
+		_heal_fx.top_level = true
+		_heal_fx.scale = Vector2(0.5, 0.5)
+		_heal_fx.sprite_frames = _build_heal_fx_frames()
+		_heal_fx.visible = false
+		_heal_fx.z_index = 16
+		add_child(_heal_fx)
+		_heal_fx.animation_finished.connect(func() -> void: _heal_fx.visible = false)
+		_threat_left = float(Stats.MONK_AI["threat_check_interval"]) \
+			* float(abs(get_instance_id()) % 7) / 7.0
 
 func _build_frames() -> SpriteFrames:
 	var sf := SpriteFrames.new()
@@ -105,6 +127,11 @@ func _build_frames() -> SpriteFrames:
 		_add_anim(sf, "idle", base + "lancer_idle.png", 12, 8.0, 320.0)
 		_add_anim(sf, "run", base + "lancer_run.png", 6, 10.0, 320.0)
 		_add_anim(sf, "attack", base + "lancer_attack.png", 3, 8.0, 320.0)
+	elif unit_type == "monk":
+		# Sheet Monk của pack (frame 192): Idle 6, Run 4, Heal 11 frame.
+		_add_anim(sf, "idle", base + "monk_idle.png", 6, 8.0)
+		_add_anim(sf, "run", base + "monk_run.png", 4, 10.0)
+		_add_anim(sf, "heal", base + "monk_heal.png", 11, 12.0)
 	else:
 		_add_anim(sf, "idle", base + "archer_idle.png", 6, 8.0)
 		_add_anim(sf, "run", base + "archer_run.png", 4, 10.0)
@@ -121,6 +148,19 @@ func _add_anim(sf: SpriteFrames, anim_name: String, tex_path: String, frames: in
 		at.atlas = sheet
 		at.region = Rect2(i * frame_size, 0, frame_size, frame_size)
 		sf.add_frame(anim_name, at)
+
+func _build_heal_fx_frames() -> SpriteFrames:
+	var sf := SpriteFrames.new()
+	var sheet := load("res://assets/units/%s/monk_heal_effect.png" % color_key) as Texture2D
+	sf.add_animation("fx")
+	sf.set_animation_speed("fx", 12.0)
+	sf.set_animation_loop("fx", false)
+	for i in 11:
+		var at := AtlasTexture.new()
+		at.atlas = sheet
+		at.region = Rect2(i * FRAME, 0, FRAME, FRAME)
+		sf.add_frame("fx", at)
+	return sf
 
 func _play(anim_name: String) -> void:
 	if _cur_anim != anim_name:
@@ -141,6 +181,13 @@ func take_damage(amount: float, attacker_pid: int) -> void:
 	queue_redraw()
 	if hp <= 0.0:
 		_die()
+
+## Hồi máu (Tu Sĩ chữa cho): kẹp ở máu tối đa, quân đã chết không hồi.
+func heal(amount: float) -> void:
+	if _dead:
+		return
+	hp = minf(max_hp, hp + amount)
+	queue_redraw()
 
 func _die() -> void:
 	_dead = true
@@ -163,6 +210,13 @@ func _process(delta: float) -> void:
 		_play("idle")
 		return
 	var home_castle: Castle = main_ref.castles[owner_pid]
+
+	# Tu Sĩ: nhánh AI riêng — không tấn công, chỉ chữa/đi theo đội/bỏ chạy.
+	if unit_type == "monk":
+		_process_monk(delta, home_castle)
+		_separate(delta)
+		queue_redraw()
+		return
 
 	# Nhịp nghĩ: tái chọn mục tiêu theo chu kỳ (lệch pha), giữa các nhịp dùng
 	# mục tiêu đã nhớ — quân đông cũng không quét toàn bản đồ mỗi frame.
@@ -472,6 +526,158 @@ func _face(to: Vector2) -> void:
 	var dx := to.x - global_position.x
 	if absf(dx) > 2.0:
 		_anim.flip_h = dx < 0.0
+
+# ===================== TU SĨ: CHỮA TRỊ / ĐI THEO ĐỘI / BỎ CHẠY =====================
+# Tu sĩ KHÔNG BAO GIỜ tấn công (Stats.UNITS.monk không có "damage"):
+# vòng đời mỗi frame chỉ gồm: bỏ chạy nếu bị dí -> tôn trọng lệnh di chuyển
+# trực tiếp -> chữa đồng minh bị thương -> bám sau lưng đội hình -> về điểm
+# tập kết. Mọi đích di chuyển đều là vị trí PHE MÌNH (quân mình/thành mình)
+# nên không bao giờ tự lao vào vùng chưa khám phá — cổng sương mù nguyên vẹn.
+
+func _process_monk(delta: float, home_castle: Castle) -> void:
+	# Lệnh tấn công trực tiếp vô nghĩa với tu sĩ: huỷ, quay về hỗ trợ.
+	if direct_mode == "attack_unit" or direct_mode == "attack_struct":
+		clear_direct()
+
+	# Quét nguy hiểm theo nhịp thưa lệch pha (như nông dân): địch áp sát
+	# trong flee_trigger_range là bỏ chạy, kể cả chưa bị đánh.
+	_threat_left -= delta
+	if _threat_left <= 0.0:
+		_threat_left = float(Stats.MONK_AI["threat_check_interval"]) \
+			* (0.8 + 0.1 * float(abs(get_instance_id()) % 5))
+		if not _fleeing and _enemy_unit_near(float(Stats.MONK_AI["flee_trigger_range"])):
+			_fleeing = true
+			_flee_left = float(Stats.MONK_AI["flee_time"])
+	if _fleeing:
+		_step_monk_flee(delta, home_castle)
+		return # đang chạy trốn thì không chữa (như dân không farm khi chạy)
+
+	# Lệnh di chuyển trực tiếp của người chơi thắng hành vi tự động.
+	if direct_mode == "move":
+		if global_position.distance_to(direct_point) > 16.0:
+			_move_toward(direct_point + slot_offset * 0.5, delta)
+		else:
+			_play("idle")
+			clear_direct()
+		return
+
+	_heal_left = maxf(0.0, _heal_left - delta)
+	_think_left -= delta
+	if _think_left <= 0.0:
+		_think_left = float(Stats.UNIT_AI["think_interval"])
+		_heal_target = _find_heal_target()
+	var target := _valid_heal_target()
+	if target != null:
+		var d := global_position.distance_to(target.global_position)
+		if d <= float(st["heal_range"]):
+			# Trong tầm chữa: đứng yên, hồi theo nhịp heal_interval.
+			_face(target.global_position)
+			_play("heal")
+			if _heal_left <= 0.0:
+				_heal_left = float(st["heal_interval"])
+				target.heal(float(st["heal_amount"]))
+				_show_heal_fx(target)
+			return
+		if d <= float(Stats.MONK_AI["seek_radius"]):
+			# Bị thương ngoài tầm chữa nhưng còn gần: chủ động tới gần.
+			_move_toward(target.global_position, delta)
+			return
+	# Không ai cần chữa ở gần: bám sau lưng quân chiến đấu gần nhất.
+	var anchor := _nearest_combat_ally()
+	if anchor != null:
+		if global_position.distance_to(anchor.global_position) > float(Stats.MONK_AI["follow_distance"]):
+			_move_toward(anchor.global_position, delta)
+		else:
+			_play("idle")
+		return
+	# Chưa có quân nào khác: về điểm tập kết trước thành như mọi quân.
+	var rally: Vector2 = main_ref.rally_point(owner_pid) + slot_offset
+	if global_position.distance_to(rally) > 14.0:
+		_move_toward(rally, delta)
+	else:
+		_play("idle")
+
+func _valid_heal_target() -> Unit:
+	if _heal_target != null and is_instance_valid(_heal_target) and _heal_target.is_alive() \
+			and _heal_target.hp < _heal_target.max_hp - 0.5:
+		return _heal_target
+	_heal_target = null
+	return null
+
+## Mục tiêu chữa = đồng minh có % máu THẤP NHẤT. Chỉ xét QUÂN (Unit) cùng
+## phe và KHÔNG phải chính mình (tu sĩ khác vẫn được chữa như mọi đồng
+## minh; công trình và nông dân không thuộc diện chữa). Ưu tiên vòng
+## heal_range trước để tu sĩ không bỏ đồng minh cạnh bên chạy theo người xa.
+func _find_heal_target() -> Unit:
+	for radius in [float(st["heal_range"]), float(Stats.MONK_AI["seek_radius"])]:
+		var best: Unit = null
+		var best_frac := 1.0
+		for n in get_tree().get_nodes_in_group("units"):
+			var u := n as Unit
+			if u == null or u == self or u.owner_pid != owner_pid or not u.is_alive():
+				continue
+			if u.hp >= u.max_hp - 0.5:
+				continue
+			if global_position.distance_to(u.global_position) > radius:
+				continue
+			var frac := u.hp / u.max_hp
+			if frac < best_frac:
+				best_frac = frac
+				best = u
+		if best != null:
+			return best
+	return null
+
+## Quân chiến đấu (kiếm/cung/giáo) cùng phe gần nhất — mỏ neo để tu sĩ bám
+## sau lưng đội hình. Tu sĩ khác KHÔNG làm mỏ neo (tránh 2 tu sĩ bám nhau).
+func _nearest_combat_ally() -> Unit:
+	var best: Unit = null
+	var best_d := INF
+	for n in get_tree().get_nodes_in_group("units"):
+		var u := n as Unit
+		if u == null or u == self or u.owner_pid != owner_pid or not u.is_alive():
+			continue
+		if u.unit_type == "monk":
+			continue
+		var d := global_position.distance_to(u.global_position)
+		if d < best_d:
+			best_d = d
+			best = u
+	return best
+
+func _enemy_unit_near(range_px: float) -> bool:
+	for n in get_tree().get_nodes_in_group("units"):
+		var u := n as Unit
+		if u == null or u.owner_pid == owner_pid or not u.is_alive():
+			continue
+		if global_position.distance_to(u.global_position) <= range_px:
+			return true
+	return false
+
+## Bỏ chạy về THÀNH CHÍNH (nơi an toàn của tu sĩ — nó không vác tài
+## nguyên nên không cần kho như nông dân). Điều kiện dừng chạy mượn đúng
+## luật của nông dân: hết giờ hoảng tối thiểu VÀ đã về gần nhà, hoặc quá
+## hạn chót flee_time + flee_max_time thì thôi chạy.
+func _step_monk_flee(delta: float, home_castle: Castle) -> void:
+	_flee_left -= delta
+	var dest := home_castle.global_position
+	var d_home := global_position.distance_to(dest)
+	var safe := d_home <= float(Stats.MONK_AI["flee_safe_distance"])
+	if (_flee_left <= 0.0 and safe) or _flee_left <= -float(Stats.MONK_AI["flee_max_time"]):
+		_fleeing = false
+		_flee_left = 0.0
+		_play("idle")
+	elif d_home > 30.0:
+		_move_toward(dest, delta)
+	else:
+		_play("idle")
+
+func _show_heal_fx(target: Unit) -> void:
+	if _heal_fx == null:
+		return
+	_heal_fx.global_position = target.global_position + Vector2(0, -20)
+	_heal_fx.visible = true
+	_heal_fx.play("fx")
 
 func _draw() -> void:
 	if _dead:

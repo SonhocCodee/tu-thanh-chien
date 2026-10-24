@@ -51,12 +51,14 @@ const UNIT_ART := {
 	"warrior": "res://assets/units/%s/warrior_idle.png",
 	"archer": "res://assets/units/%s/archer_idle.png",
 	"lancer": "res://assets/units/%s/lancer_idle.png",
+	"monk": "res://assets/units/%s/monk_idle.png",
 }
 const UNIT_DESC := {
 	"pawn": "Thu thập tài nguyên, xây dựng.",
 	"warrior": "Quân cận chiến, máu cao.",
 	"archer": "Quân tầm xa, máu thấp.",
 	"lancer": "Tinh nhuệ cầm giáo dài, trâu và đâm xa — chiếm 2 ô quân.",
+	"monk": "Không tấn công — đi theo đội hình và hồi máu cho quân đồng minh.",
 }
 const PRODUCER_LABELS := {"castle": "Thành chính", "barracks": "Doanh trại"}
 const TAB_TITLES := ["XÂY DỰNG", "HUẤN LUYỆN", "DÂN & PHÂN BỔ"]
@@ -75,6 +77,8 @@ const UNIT_FRAME_REGIONS := {
 	# Lancer: sheet frame 320 (không phải 192) — vùng đo từ alpha frame 0
 	# của lancer_idle blue (115,48)-(184,198).
 	"lancer": Rect2(115, 48, 69, 150),
+	# Monk: đo từ alpha frame 0 của monk_idle blue (67,65)-(125,134).
+	"monk": Rect2(67, 65, 58, 69),
 }
 const CARD_SIZE := Vector2(122, 100)
 
@@ -626,6 +630,9 @@ func _build_tab_train() -> void:
 			if u.has("damage"):
 				dmg = " • %d đánh" % int(u["damage"])
 			var stat_line := "%d máu%s" % [int(u["hp"]), dmg]
+			if u.has("heal_amount"):
+				# Quân hỗ trợ (Tu Sĩ): hiện mức chữa thay cho sát thương.
+				stat_line = "%d máu • chữa +%d HP/%ds" % [int(u["hp"]), int(u["heal_amount"]), int(u["heal_interval"])]
 			var cost_line := "%s • %ds" % [Stats.cost_text(tr["cost"]), tsec]
 			var tip := "%s — %s\nGiá: %s • Máu: %d%s • Huấn luyện: %ds tại %s" % [
 				str(u["label"]), str(UNIT_DESC.get(utype, "")), Stats.cost_text(tr["cost"]), int(u["hp"]),
