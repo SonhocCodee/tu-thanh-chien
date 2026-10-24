@@ -35,6 +35,7 @@ const BUILD_ART := {
 	"store_stone": "res://assets/buildings/store_stone_%s.png",
 	"store_gold": "res://assets/buildings/store_gold_%s.png",
 	"store_meat": "res://assets/buildings/store_meat_%s.png",
+	"farm": "res://assets/buildings/farm.png", # ruộng: 1 texture chung, không theo màu phe
 }
 const BUILD_DESC := {
 	"house": "Tăng giới hạn dân số.",
@@ -45,6 +46,7 @@ const BUILD_DESC := {
 	"store_gold": "Chỉ chứa VÀNG (tối đa 500). Dân vác vàng nộp ở đây hoặc thành chính. Địch phá kho sẽ CƯỚP số vàng trong kho!",
 	"store_meat": "Chỉ chứa THỊT (tối đa 500). Dân vác thịt nộp ở đây hoặc thành chính. Địch phá kho sẽ CƯỚP số thịt trong kho!",
 	"soldier_house": "Tăng GIỚI HẠN QUÂN +6 ô. Không luyện quân — phá nhà này là quân đông bị kẹt không luyện thêm được.",
+	"farm": "Nguồn THỊT chủ động: chứa 250 thịt, nông dân làm ruộng như farm 1 điểm thịt, đặt ở mọi vùng đã khám phá. Cạn thì ruộng sụp thành đất trống — xây lại bằng 60 gỗ.",
 }
 const UNIT_ART := {
 	"pawn": "res://assets/units/%s/pawn_idle.png",

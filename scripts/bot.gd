@@ -20,6 +20,7 @@ var _scout_wait: float = 20.0
 var _scout_elapsed: float = 0.0
 var _scout: Unit = null # trinh sát = 1 quân đi riêng (lệnh trực tiếp), KHÔNG kéo cả đạo quân
 var _scout_dest: Vector2 = Vector2.ZERO
+var _farm_cooldown: float = 0.0 # giãn nhịp thử trồng ruộng (đặt trượt không được kẹt cả chuỗi xây)
 
 func setup(p_ctrl: PlayerController, p_game: Node) -> void:
 	ctrl = p_ctrl
@@ -35,6 +36,7 @@ func _process(delta: float) -> void:
 	_timer -= delta
 	_scout_wait -= delta
 	_scout_elapsed += delta
+	_farm_cooldown -= delta
 	if _timer > 0.0:
 		return
 	_timer = float(Stats.BOT["decision_interval"])
@@ -48,6 +50,30 @@ func _scout_done() -> bool:
 	if _scout_elapsed > 120.0:
 		return true
 	return _scout.global_position.distance_to(_scout_dest) < 150.0
+
+## Cừu quanh nhà đã hết chưa — theo ĐÚNG tầm hiểu biết sương mù của bot:
+## không còn con cừu SỐNG nào ĐÃ KHÁM PHÁ trong 420px quanh thành.
+## (Cừu giữa map do HerdKeeper hồi liên tục nhưng ở xa >600px và thường
+## chưa khám phá đầu trận; cừu quanh thành săn hết là hết.)
+func _sheep_near_home_gone(castle: Castle) -> bool:
+	for n in game.get_tree().get_nodes_in_group("sheep"):
+		var s := n as Sheep
+		if s.alive and castle.global_position.distance_to(s.global_position) <= 420.0 \
+				and game.is_pos_explored_for(player.pid, s.global_position):
+			return false
+	return true
+
+## Đặt ruộng vào 1 trong 2 ô trống hai bên thành. Tọa độ đã rà tay:
+## cách MỌI ô xây sẵn của build_slots >= ~70px, cách node gỗ gần nhất
+## ~100px+, cách cừu quanh nhà >300px, và nằm trong tầm nhìn thành
+## (212px < 265) nên chắc chắn thuộc vùng đã khám phá của chính phe.
+func _try_place_farm(castle: Castle) -> void:
+	var c := castle.global_position
+	var mx := 1.0 if c.x < game.WORLD.x * 0.5 else -1.0
+	var my := 1.0 if c.y < game.WORLD.y * 0.5 else -1.0
+	for off in [Vector2(mx * -140, my * -160), Vector2(mx * -140, my * 160)]:
+		if ctrl.place_building("farm", c + off):
+			return
 
 ## Chọn 1 quân đang rảnh làm trinh sát.
 func _pick_scout() -> Unit:
@@ -113,6 +139,15 @@ func _decide() -> void:
 		ctrl.place_building("house", slots[0])
 	elif int(counts.get("barracks", 0)) == 0:
 		ctrl.place_building("barracks", slots[1])
+	elif int(counts.get("farm", 0)) == 0 and _farm_cooldown <= 0.0 \
+			and _sheep_near_home_gone(castle) and player.can_afford(Stats.BUILDINGS["farm"]["cost"]):
+		# RUỘNG: cừu quanh nhà đã săn cạn -> trồng ruộng làm nguồn thịt
+		# chủ động (nông dân phân bổ "thịt" tự tìm tới node trong ruộng
+		# như điểm thịt thường). Ruộng cạn tự sụp -> counts về 0 -> bot
+		# trồng lại ở nhịp sau. Thử đặt xong nghỉ 1 nhịp dài để 1 lần đặt
+		# trượt (cừu đứng chắn, node kề...) không kẹt cả chuỗi xây.
+		_try_place_farm(castle)
+		_farm_cooldown = 15.0
 	elif int(counts.get("tower", 0)) == 0 and game.pop_used(player.pid) + 1 <= game.pop_cap(player.pid):
 		# Tháp giữ thêm 1 ô dân cho cung thủ đứng bắn: hết ô thì BỎ QUA
 		# tháp, xây nhà khác trước (Nhà Kho / Nhà Lính / Nhà 2 để nới dân

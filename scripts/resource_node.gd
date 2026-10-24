@@ -19,6 +19,8 @@ var is_big: bool = false
 var amount: int = 0
 var max_amount: int = 0
 var variant: int = 0 # biến thể sprite (đá 1/2, quặng 1..6, gốc 1..4)
+var owner_pid: int = -1 # -1 = node thế giới không chủ; >=0 = node thuộc 1 phe (node thịt trong RUỘNG) — chỉ chủ mới farm được
+var hosted: bool = false # node "mọc trong công trình" (ruộng): KHÔNG có sprite/vòng đời riêng — công trình chủ (Building) tự lo hình ảnh + sụp đổ
 
 var _sprite: Sprite2D = null
 var _crack_overlay: CrackOverlay = null
@@ -87,6 +89,29 @@ func setup(p_type: String, p_big: bool, p_variant: int = 0) -> void:
 	_crack_overlay.node = self
 	_crack_overlay.z_index = 1
 	add_child(_crack_overlay)
+
+## Node thịt của RUỘNG: do Building "farm" tạo làm node con. Không sprite
+## (ruộng tự vẽ ô đất + cây theo tỉ lệ còn lại), trữ lượng = farm_meat của
+## Stats.BUILDINGS.farm. Cạn -> phát signal depleted như node thường và tự
+## huỷ; Building nghe signal để TỰ SỤP cả ruộng (xem building.gd).
+func setup_farm(p_owner: int, p_amount: int) -> void:
+	res_type = "meat"
+	is_big = false
+	hosted = true
+	owner_pid = p_owner
+	_rng.randomize()
+	max_amount = p_amount
+	amount = p_amount
+	add_to_group("res_nodes")
+
+## Bật/tắt khả năng bị nông dân nhắm tới. Ruộng tạo node ở trạng thái TẮT,
+## xây xong mới BẬT (đang xây không farm được); tắt = rời group res_nodes
+## nên mọi đường tìm node (gần nhất / click phải) đều không thấy.
+func set_harvest_active(on: bool) -> void:
+	if on and not is_in_group("res_nodes"):
+		add_to_group("res_nodes")
+	elif not on and is_in_group("res_nodes"):
+		remove_from_group("res_nodes")
 
 ## Đặt trữ lượng tùy ý (dùng cho sân khấu demo/test cạn nhanh).
 func set_amount(value: int) -> void:

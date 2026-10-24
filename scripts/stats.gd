@@ -178,6 +178,22 @@ const BUILDINGS := {
 		"radius": 42.0,
 		"army_bonus": 6,
 	},
+	# RUỘNG (nông trại): nguồn THỊT chủ động kiểu Đế Chế — thay vì chỉ săn
+	# cừu. Công trình chứa 1 lượng thịt HỮU HẠN (farm_meat): bên trong nó
+	# "mọc" 1 node thịt do chính ruộng làm chủ (xem building.gd), nông dân
+	# làm ruộng đúng như làm 1 điểm tài nguyên thịt, vác về kho thịt/thành.
+	# CẠN -> ruộng TỰ SỤP thành đất trống rồi biến mất hẳn (xây lại từ đầu)
+	# nên giá rẻ (60 gỗ). "free_place": đặt ở mọi vùng ĐÃ KHÁM PHÁ như kho
+	# chuyên dụng, qua ĐÚNG luật can_place_building dùng chung.
+	"farm": {
+		"label": "Ruộng",
+		"cost": {"wood": 60},
+		"build_time": 8.0,
+		"hp": 150.0,
+		"radius": 40.0,
+		"farm_meat": 250,
+		"free_place": true,
+	},
 }
 
 # --- Thành chính ---
