@@ -1106,7 +1106,12 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed:
 		# Click trên HUD (panel trên/dưới, tọa độ màn hình) thì không tính là click map.
 		var screen_pos := get_viewport().get_mouse_position()
-		if screen_pos.y < 38.0 or screen_pos.y > FIELD_BOTTOM:
+		# M2 giai đoạn 3: HUD mới không còn là 2 dải đặc — hỏi thẳng HUD xem
+		# điểm này có nằm trên UI không (fallback về dải y cũ nếu HUD chưa có).
+		var over_ui := screen_pos.y < 38.0 or screen_pos.y > FIELD_BOTTOM
+		if _hud != null and _hud.has_method("is_point_over_ui"):
+			over_ui = _hud.is_point_over_ui(screen_pos)
+		if over_ui:
 			return
 		if event.button_index == MOUSE_BUTTON_RIGHT:
 			if placing_type != "" or awaiting_order:
@@ -1421,8 +1426,13 @@ class FogOverlay:
 					draw_rect(rect, BLACK_COLOR)
 
 # Khung kéo chọn quân (vẽ theo tọa độ thế giới, đi theo camera).
+# M2 giai đoạn 3: khung = nền trắng mờ + 4 GÓC VÀNG lấy từ pack
+# (Update 010 UI/Pointers/02 — mỗi góc là 1/4 ảnh, vẽ kích thước cố định
+# bất kể khung to nhỏ). Vòng chọn dưới chân quân giữ nguyên màu xanh.
 class SelectionOverlay:
 	extends Node2D
+	const CORNER_TEX := preload("res://assets/ui/pointers_02.png")
+	const CORNER := 30.0 # kích thước mỗi góc khi vẽ (ảnh gốc 64, mỗi góc 32)
 	var game: Node = null
 
 	func _draw() -> void:
@@ -1435,8 +1445,14 @@ class SelectionOverlay:
 			rect = game._demo_drag_rect
 		else:
 			return
-		draw_rect(rect, Color(0.3, 1, 0.4, 0.12))
-		draw_rect(rect, Color(0.3, 1, 0.4, 0.9), false, 2.0)
+		draw_rect(rect, Color(1, 1, 1, 0.08))
+		var h := CORNER * 0.5
+		var tl := rect.position
+		var br := rect.position + rect.size
+		draw_texture_rect_region(CORNER_TEX, Rect2(tl - Vector2(h, h), Vector2(CORNER, CORNER)), Rect2(0, 0, 32, 32))
+		draw_texture_rect_region(CORNER_TEX, Rect2(Vector2(br.x - h, tl.y - h), Vector2(CORNER, CORNER)), Rect2(32, 0, 32, 32))
+		draw_texture_rect_region(CORNER_TEX, Rect2(Vector2(tl.x - h, br.y - h), Vector2(CORNER, CORNER)), Rect2(0, 32, 32, 32))
+		draw_texture_rect_region(CORNER_TEX, Rect2(br - Vector2(h, h), Vector2(CORNER, CORNER)), Rect2(32, 32, 32, 32))
 
 # Vòng dấu lệnh click phải: hiện rồi mờ dần.
 class OrderMarker:

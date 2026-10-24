@@ -7,6 +7,9 @@ extends Control
 
 var game: Node = null
 var _redraw_timer: float = 0.0
+# M2 giai đoạn 3: chế độ TRÒN — map vẽ trong 1 dải 2:1 nằm giữa khung tròn
+# (HUD bọc minimap bằng khung clip hình tròn). Tắt = hành vi cũ (chữ nhật).
+var round_mode: bool = false
 
 func _process(delta: float) -> void:
 	_redraw_timer -= delta
@@ -14,15 +17,26 @@ func _process(delta: float) -> void:
 		_redraw_timer = 0.3
 		queue_redraw()
 
+# Vùng hình chữ nhật (tọa độ local) mà map thật chiếm trong control này.
+func _band() -> Rect2:
+	if not round_mode:
+		return Rect2(Vector2.ZERO, size)
+	var bw := size.x * 0.86
+	var bh := bw * 0.5
+	return Rect2(Vector2((size.x - bw) * 0.5, (size.y - bh) * 0.5), Vector2(bw, bh))
+
 func _to_map(pos: Vector2) -> Vector2:
 	var w: Vector2 = game.WORLD if game != null else Vector2(1920, 960)
-	return Vector2(pos.x / w.x * size.x, pos.y / w.y * size.y)
+	var b := _band()
+	return b.position + Vector2(pos.x / w.x * b.size.x, pos.y / w.y * b.size.y)
 
 func _jump_to(click_pos: Vector2) -> void:
 	if game == null:
 		return
 	var w: Vector2 = game.WORLD
-	var world := Vector2(click_pos.x / size.x * w.x, click_pos.y / size.y * w.y)
+	var b := _band()
+	var rel := (click_pos - b.position) / b.size
+	var world := Vector2(clampf(rel.x, 0.0, 1.0) * w.x, clampf(rel.y, 0.0, 1.0) * w.y)
 	game.set_camera_to(world)
 
 func _gui_input(event: InputEvent) -> void:
@@ -34,12 +48,14 @@ func _gui_input(event: InputEvent) -> void:
 		accept_event()
 
 func _draw() -> void:
-	draw_rect(Rect2(Vector2.ZERO, size), Color(0.02, 0.02, 0.03))
+	if not round_mode:
+		draw_rect(Rect2(Vector2.ZERO, size), Color(0.02, 0.02, 0.03))
 	if game == null:
 		return
+	var b := _band()
 	var fog: FogOfWar = game.fogs[0]
-	var cw := size.x / fog.cols
-	var ch := size.y / fog.rows
+	var cw := b.size.x / fog.cols
+	var ch := b.size.y / fog.rows
 	for y in fog.rows:
 		for x in fog.cols:
 			var i := y * fog.cols + x
@@ -50,7 +66,7 @@ func _draw() -> void:
 				# M2: vùng MỜ sáng hơn rõ rệt so với ĐEN (0,0,0) để không
 				# bị nhìn nhầm là "đen lại" — luật: đã khám phá thì chỉ mờ.
 				col = Color(0.32, 0.42, 0.25)
-			draw_rect(Rect2(x * cw, y * ch, cw + 1, ch + 1), col)
+			draw_rect(Rect2(b.position.x + x * cw, b.position.y + y * ch, cw + 1, ch + 1), col)
 	# Điểm tài nguyên đã khám phá.
 	for n in get_tree().get_nodes_in_group("res_nodes"):
 		var node := n as ResourceNode
@@ -80,4 +96,5 @@ func _draw() -> void:
 		var view_tl := _to_map(cam - Vector2(640, 360))
 		var view_br := _to_map(cam + Vector2(640, 360))
 		draw_rect(Rect2(view_tl, view_br - view_tl), Color(1, 0.9, 0.3, 0.95), false, 2.0)
-	draw_rect(Rect2(Vector2.ZERO, size), Color(1, 1, 1, 0.6), false, 1.0)
+	if not round_mode:
+		draw_rect(Rect2(Vector2.ZERO, size), Color(1, 1, 1, 0.6), false, 1.0)
