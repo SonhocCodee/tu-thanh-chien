@@ -453,6 +453,72 @@ const FACTION_COLORS := {
 	"purple": Color(0.75, 0.45, 1.0),
 }
 
+# --- LÊN ĐỜI (tại Thành chính) ---
+# Đời là CỔNG KHOÁ cho nâng cấp: nhà cấp 2 cần Đời 2, cấp 3 cần Đời 3;
+# nghiên cứu quân cấp 2/3 cũng vậy. TUYỆT ĐỐI không khoá ngược nội dung
+# cấp 1 đang có. Thành đổi sprite theo đời (castle lv2/lv3 của bộ vòng 4).
+const AGES := {
+	2: {"label": "Đời 2", "cost": {"meat": 500, "wood": 200}, "time": 60.0},
+	3: {"label": "Đời 3", "cost": {"meat": 800, "gold": 400}, "time": 90.0},
+}
+const MAX_AGE := 3
+const MAX_LEVEL := 3
+
+# --- NÂNG CẤP NHÀ TỪNG CÁI + NGHIÊN CỨU QUÂN THEO LOẠI ---
+# Chỉ số theo CẤP nằm hết ở đây (mảng index 0/1/2 = cấp 1/2/3).
+const UPGRADES := {
+	# Máu nhà theo cấp: +60% / +120% so với cấp 1.
+	"building_hp_mult": [1.0, 1.6, 2.2],
+	# Ích lợi riêng theo cấp:
+	"house_pop": [8, 12, 16], # dân số mỗi Nhà Dân (cấp 1 = ECONOMY.pop_per_house)
+	"store_capacity": [500, 800, 1200], # sức chứa mỗi kho chuyên dụng
+	"barracks_train_factor": [1.0, 0.8, 0.65], # hệ số THỜI GIAN luyện ở doanh trại (-20%/-35%)
+	"tower_range_mult": [1.0, 1.15, 1.3], # tầm bắn của cung thủ trực tháp (+15%/+30%)
+	"soldier_army_bonus": [6, 9, 12], # ô quân mỗi Nhà Lính
+	# Giá/thời gian nâng cấp nhà: hệ số nhân lên giá/thời gian xây gốc.
+	"building_cost_factor": {2: 1.2, 3: 2.0},
+	"building_time_factor": {2: 0.8, 3: 1.2},
+	# Quân theo loại: máu +20%/cấp, sát thương +15%/cấp (nhân luỹ tiến).
+	"unit_hp_mult": [1.0, 1.2, 1.44],
+	"unit_dmg_mult": [1.0, 1.15, 1.3225],
+	# Nông dân: sức vác tăng + farm nhanh hơn (hệ số thời gian chặt/xẻ).
+	"pawn_carry": [10, 13, 16],
+	"pawn_harvest_factor": [1.0, 0.85, 0.72],
+	# Giá + thời gian NGHIÊN CỨU quân theo loại theo cấp đích.
+	# Nơi nghiên cứu: kiếm/cung/giáo tại Doanh trại, nông dân tại Thành chính.
+	"unit_research": {
+		"pawn": {
+			2: {"cost": {"meat": 150}, "time": 20.0},
+			3: {"cost": {"meat": 300}, "time": 35.0},
+		},
+		"warrior": {
+			2: {"cost": {"gold": 150}, "time": 25.0},
+			3: {"cost": {"gold": 300}, "time": 40.0},
+		},
+		"archer": {
+			2: {"cost": {"gold": 120, "wood": 60}, "time": 25.0},
+			3: {"cost": {"gold": 250, "wood": 100}, "time": 40.0},
+		},
+		"lancer": {
+			2: {"cost": {"gold": 200, "wood": 50}, "time": 30.0},
+			3: {"cost": {"gold": 400, "wood": 100}, "time": 45.0},
+		},
+	},
+}
+
+## Giá nâng cấp 1 nhà lên cấp `to_level` (từ giá xây gốc của loại nhà).
+static func building_upgrade_cost(building_type: String, to_level: int) -> Dictionary:
+	var base: Dictionary = BUILDINGS[building_type]["cost"]
+	var f := float(UPGRADES["building_cost_factor"][to_level])
+	var out := {}
+	for k in base.keys():
+		out[k] = int(round(float(base[k]) * f))
+	return out
+
+static func building_upgrade_time(building_type: String, to_level: int) -> float:
+	var f := float(UPGRADES["building_time_factor"][to_level])
+	return float(BUILDINGS[building_type]["build_time"]) * f
+
 static func unit_stats(unit_type: String) -> Dictionary:
 	return UNITS[unit_type]
 

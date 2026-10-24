@@ -14,6 +14,56 @@ var build_total: float = 1.0
 var builders_required: int = 1
 var stalled_warned: bool = false
 
+# --- Nâng cấp nhà từng cái (hệ Lên Đời) ---
+var level: int = 1 # cấp hiện tại của CHÍNH nhà này (1..3)
+var base_hp: float = 0.0 # máu gốc cấp 1 (máu theo cấp = base_hp * hệ số Stats)
+var display_level: int = 1 # cấp HIỂN THỊ theo snapshot sương mù (nhà địch)
+var _base_scale: Vector2 = Vector2.ONE # tỉ lệ sprite cấp 1 (chuẩn hoá cấp 2/3 theo đây)
+var _base_tex_h: float = 0.0 # chiều cao texture cấp 1
+
+# Ánh xạ loại nhà -> bộ sprite nâng cấp vòng 4 (assets/upgrades/buildings):
+# 4 kho dùng chung bộ "storehouse" (biển hiệu icon trên mái vẫn phân biệt
+# loại kho); Nhà Lính dùng bộ "house" (bản thân nó là biến thể nhà dân).
+# RUỘNG (farm) KHÔNG có trong bảng này = không nâng cấp được (ruộng là
+# nguồn thịt tiêu hao, cạn thì tự sụp — Main chặn nâng cấp ngoài bảng này).
+const UPGRADE_TEX := {
+	"house": "house", "barracks": "barracks", "tower": "tower",
+	"store_wood": "storehouse", "store_stone": "storehouse",
+	"store_gold": "storehouse", "store_meat": "storehouse",
+	"soldier_house": "house",
+}
+
+func disp_level() -> int:
+	return display_level if use_snapshot else level
+
+func _level_texture(lv: int) -> Texture2D:
+	if lv <= 1:
+		return _tex_normal
+	var map_name: String = UPGRADE_TEX.get(building_type, "house")
+	return load("res://assets/upgrades/buildings/%s_%s_lv%d.png" % [map_name, color_key, lv])
+
+## Gán texture cho sprite nhà, chuẩn hoá TỈ LỆ theo chiều cao hiển thị của
+## cấp 1 (sprite vòng 4 cùng canvas với cấp 1 nên thường tỉ lệ không đổi;
+## chuẩn hoá này là lưới an toàn nếu mẫu asset sau này đổi canvas).
+func _set_sprite_texture(tex: Texture2D, by_level: bool) -> void:
+	_sprite.texture = tex
+	if by_level and tex != null and _base_tex_h > 0.0 and tex.get_height() > 0:
+		_sprite.scale = _base_scale * (_base_tex_h / float(tex.get_height()))
+	else:
+		_sprite.scale = _base_scale
+
+## Hoàn tất nâng cấp lên cấp kế (Main gọi khi nghiên cứu "upgrade" xong):
+## tăng cấp, máu tối đa theo hệ số cấp (phần tăng được cộng vào máu hiện
+## tại), sprite + ích lợi theo cấp áp ngay.
+func complete_upgrade() -> void:
+	level = mini(level + 1, int(Stats.MAX_LEVEL))
+	var old_max := max_hp
+	max_hp = base_hp * float(Stats.UPGRADES["building_hp_mult"][level - 1])
+	hp += max_hp - old_max
+	display_level = level
+	_refresh_display()
+	queue_redraw()
+
 var _sprite: Sprite2D
 var _tex_normal: Texture2D
 var _tex_destroyed: Texture2D
@@ -33,6 +83,7 @@ func setup(p_pid: int, p_type: String, p_color: String, p_main: Node) -> void:
 	var def: Dictionary = Stats.BUILDINGS[p_type]
 	hp = def["hp"]
 	max_hp = hp
+	base_hp = hp
 	radius = def["radius"]
 	build_total = def["build_time"]
 	build_left = build_total
@@ -117,6 +168,8 @@ func _ready() -> void:
 			# 26px để chân ruộng (đáy ô đất) trùng điểm đặt.
 			_sprite.scale = Vector2(1.0, 1.0)
 			_sprite.position = Vector2(0, -26)
+	_base_scale = _sprite.scale
+	_base_tex_h = float(_tex_normal.get_height()) if _tex_normal != null else 0.0
 	add_child(_sprite)
 	if is_storage():
 		_make_sign()
@@ -290,17 +343,37 @@ func _update_farm_label() -> void:
 ## như Unit (idle 6 frame, shoot 8 frame, khung 192px, tỉ lệ 0.5 như quân
 ## thật). Vị trí: chân cung thủ (điểm dưới frame, lệch +40px từ tâm khung)
 ## đáp lên nóc tháp (đỉnh sprite tháp hiển thị ở y ≈ -89 theo building).
+## Đường dẫn sprite cung thủ theo CẤP NGHIÊN CỨU CUNG THỦ của phe mình
+## (cấp 1 = bộ gốc trong assets/units, cấp 2/3 = bộ vòng 4).
+func _archer_tex(file_name: String) -> String:
+	var lv := 1
+	if main_ref != null and main_ref.has_method("get_unit_level"):
+		lv = main_ref.get_unit_level(owner_pid, "archer")
+	if lv >= 2:
+		return "res://assets/upgrades/units/%s/%s_lv%d.png" % [color_key, file_name, lv]
+	return "res://assets/units/%s/%s.png" % [color_key, file_name]
+
 func _build_archer() -> void:
 	_archer = AnimatedSprite2D.new()
 	var sf := SpriteFrames.new()
-	var base := "res://assets/units/%s/" % color_key
-	_add_archer_anim(sf, "idle", base + "archer_idle.png", 6, 8.0)
-	_add_archer_anim(sf, "attack", base + "archer_shoot.png", 8, 12.0)
+	_add_archer_anim(sf, "idle", _archer_tex("archer_idle"), 6, 8.0)
+	_add_archer_anim(sf, "attack", _archer_tex("archer_shoot"), 8, 12.0)
 	_archer.sprite_frames = sf
 	_archer.scale = Vector2(0.5, 0.5)
 	_archer.position = Vector2(0, -114)
 	_archer.visible = false
 	add_child(_archer)
+	_archer.play("idle")
+
+## Nghiên cứu cung thủ của phe vừa lên cấp -> nạp lại bộ frame cho cung
+## trực tháp (Main gọi cho mọi tháp của phe khi nghiên cứu cung xong).
+func refresh_crew_frames() -> void:
+	if _archer == null:
+		return
+	var sf := SpriteFrames.new()
+	_add_archer_anim(sf, "idle", _archer_tex("archer_idle"), 6, 8.0)
+	_add_archer_anim(sf, "attack", _archer_tex("archer_shoot"), 8, 12.0)
+	_archer.sprite_frames = sf
 	_archer.play("idle")
 
 func _add_archer_anim(sf: SpriteFrames, anim_name: String, tex_path: String, frames: int, fps: float) -> void:
@@ -328,18 +401,22 @@ func _refresh_display() -> void:
 	if building_type == "farm":
 		_update_farm_label()
 	if disp_destroyed():
-		_sprite.texture = _tex_destroyed
+		_set_sprite_texture(_tex_destroyed, false)
 		_sprite.modulate = Color(0.75, 0.75, 0.75)
 	elif not disp_constructed():
 		if _tex_construction != null:
-			_sprite.texture = _tex_construction
+			_set_sprite_texture(_tex_construction, false)
 			_sprite.modulate = Color.WHITE
 		else:
-			_sprite.texture = _tex_normal
+			_set_sprite_texture(_level_texture(disp_level()), true)
 			_sprite.modulate = Color(1, 1, 1, 0.55)
 	else:
-		# Ruộng: texture theo GIAI ĐOẠN cây (snapshot sương mù khi cần).
-		_sprite.texture = _farm_stage_texture() if building_type == "farm" else _tex_normal
+		# Ruộng: texture theo GIAI ĐOẠN cây (snapshot sương mù khi cần);
+		# nhà thường: texture theo CẤP HIỂN THỊ (snapshot sương mù).
+		if building_type == "farm":
+			_set_sprite_texture(_farm_stage_texture(), false)
+		else:
+			_set_sprite_texture(_level_texture(disp_level()), true)
 		_sprite.modulate = Color.WHITE
 	# Cung thủ trên tháp: chỉ đứng trên tháp ĐÃ XÂY XONG và còn đứng vững —
 	# đang xây thì chưa có ai, tháp sập thì cung thủ chết theo (biến mất).
@@ -358,7 +435,8 @@ func storage_res() -> String:
 	return str(Stats.BUILDINGS.get(building_type, {}).get("storage_res", ""))
 
 func storage_capacity() -> int:
-	return int(Stats.BUILDINGS.get(building_type, {}).get("storage_capacity", 500))
+	# Sức chứa theo CẤP của kho (500 -> 800 -> 1200).
+	return int(Stats.UPGRADES["store_capacity"][level - 1])
 
 func accepts_res(res_key: String) -> bool:
 	# Kho đang xây dở thì chưa nhận hàng.
@@ -401,6 +479,7 @@ func _process(delta: float) -> void:
 			main_ref.on_building_completed(self)
 			queue_redraw()
 		return
+	_tick_research(delta)
 	_tick_production(delta)
 	if building_type == "tower":
 		_tick_tower_archer(delta)
@@ -420,8 +499,15 @@ func _tick_tower_archer(delta: float) -> void:
 		return
 	var def: Dictionary = Stats.BUILDINGS["tower"]
 	var ust: Dictionary = Stats.UNITS[str(def.get("crew_unit", "archer"))]
+	# Tầm bắn theo CẤP THÁP (+15%/+30%); sát thương theo CẤP NGHIÊN CỨU
+	# của loại quân trực tháp (nó là 1 cung thủ thật của phe).
+	var p_range := float(def["tower_range"]) * float(Stats.UPGRADES["tower_range_mult"][level - 1])
+	var crew_lv := 1
+	if main_ref != null and main_ref.has_method("get_unit_level"):
+		crew_lv = main_ref.get_unit_level(owner_pid, str(def.get("crew_unit", "archer")))
+	var p_damage := float(ust["damage"]) * float(Stats.UPGRADES["unit_dmg_mult"][crew_lv - 1])
 	var best: Unit = null
-	var best_d := float(def["tower_range"])
+	var best_d := p_range
 	for n in get_tree().get_nodes_in_group("units"):
 		var u := n as Unit
 		if u == null or u.owner_pid == owner_pid or not u.is_alive():
@@ -437,7 +523,7 @@ func _tick_tower_archer(delta: float) -> void:
 		if _archer != null:
 			_archer.flip_h = best.global_position.x < global_position.x
 			_archer.play("attack")
-		main_ref.spawn_projectile(global_position + Vector2(0, -108), best, float(ust["damage"]), owner_pid, float(ust["projectile_speed"]), color_key)
+		main_ref.spawn_projectile(global_position + Vector2(0, -108), best, p_damage, owner_pid, float(ust["projectile_speed"]), color_key, crew_lv)
 
 func _draw() -> void:
 	# Bảng gỗ treo biển hiệu của kho chuyên dụng (nằm trên thanh máu).
@@ -464,3 +550,8 @@ func _draw() -> void:
 		draw_rect(Rect2(pos, Vector2(w, 7)), Color(0, 0, 0, 0.7))
 		var frac2 := clampf(effective_hp() / max_hp, 0.0, 1.0)
 		draw_rect(Rect2(pos, Vector2(w * frac2, 7)), Stats.FACTION_COLORS[color_key])
+		# Đang NÂNG CẤP: thanh tiến độ vàng ngay dưới thanh máu.
+		if is_researching() and research_key == "upgrade" and not use_snapshot:
+			var upos := pos + Vector2(0, 9)
+			draw_rect(Rect2(upos, Vector2(w, 5)), Color(0, 0, 0, 0.7))
+			draw_rect(Rect2(upos, Vector2(w * research_progress(), 5)), Color(1.0, 0.8, 0.3))

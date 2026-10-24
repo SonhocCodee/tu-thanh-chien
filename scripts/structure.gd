@@ -26,6 +26,43 @@ var silent_destroy: bool = false # sập TỰ NHIÊN (ruộng cạn tự sụp):
 
 var train_queue: Array = [] # [{unit_type, time_left, total}]
 
+# --- Nghiên cứu (lên đời / nghiên cứu quân / nâng cấp nhà) ---
+# Mỗi công trình chỉ chạy 1 nghiên cứu tại 1 thời điểm (song song với hàng
+# chờ huấn luyện). research_key: "" = rảnh | "age" | "unit:<loại>" |
+# "upgrade" (chỉ Building tự nâng cấp chính nó). Hoàn thành -> Main xử lý
+# hiệu lực qua on_research_completed.
+var research_key: String = ""
+var research_left: float = 0.0
+var research_total: float = 0.0
+
+func is_researching() -> bool:
+	return research_key != ""
+
+func start_research(key: String, total_time: float) -> bool:
+	if is_researching() or not is_alive():
+		return false
+	research_key = key
+	research_total = total_time
+	research_left = total_time
+	return true
+
+func research_progress() -> float:
+	if research_total <= 0.0:
+		return 0.0
+	return clampf(1.0 - research_left / research_total, 0.0, 1.0)
+
+func _tick_research(delta: float) -> void:
+	if not is_researching():
+		return
+	research_left -= delta
+	if research_left <= 0.0:
+		var key := research_key
+		research_key = ""
+		research_left = 0.0
+		research_total = 0.0
+		if main_ref != null and main_ref.has_method("on_research_completed"):
+			main_ref.on_research_completed(self, key)
+
 # Snapshot hiển thị cho sương mù phía người chơi (chỉ cập nhật khi ô đang SÁNG với người chơi)
 var use_snapshot: bool = false
 var display_hp: float = 0.0
@@ -104,6 +141,9 @@ func force_ruin() -> void:
 	hp = 0.0
 	destroyed = true
 	train_queue.clear()
+	research_key = ""
+	research_left = 0.0
+	research_total = 0.0
 	_refresh_display()
 	queue_redraw()
 

@@ -23,6 +23,10 @@ var hp: float = 0.0
 var main_ref: Node = null
 var idle_offset: Vector2 = Vector2.ZERO
 
+# --- Cấp nghiên cứu NÔNG DÂN của phe (PlayerState.unit_levels["pawn"]) ---
+var level: int = 1
+var base_st: Dictionary = {}
+
 var assigned: String = "" # "" | "wood" | "stone" | "gold" | "meat"
 var carrying_type: String = ""
 var carrying: int = 0
@@ -72,11 +76,41 @@ var _threat_left: float = 0.0
 func setup(p_owner: int, p_color: String, p_main: Node, p_idle_offset: Vector2) -> void:
 	owner_pid = p_owner
 	color_key = p_color
-	st = Stats.unit_stats("pawn")
+	base_st = Stats.unit_stats("pawn").duplicate()
+	if p_main != null and p_main.has_method("get_unit_level"):
+		level = p_main.get_unit_level(p_owner, "pawn")
+	_apply_level_stats()
 	hp = st["hp"]
 	max_hp = hp
 	main_ref = p_main
 	idle_offset = p_idle_offset
+
+## Cấp nông dân: SỨC VÁC tăng (10 -> 13 -> 16) + FARM NHANH hơn
+## (thời gian 1 lượt chặt/xẻ nhân hệ số 1.0 -> 0.85 -> 0.72).
+func _apply_level_stats() -> void:
+	st = base_st.duplicate()
+	st["carry_capacity"] = int(Stats.UPGRADES["pawn_carry"][level - 1])
+	st["harvest_time"] = float(base_st["harvest_time"]) * float(Stats.UPGRADES["pawn_harvest_factor"][level - 1])
+
+func _level_path(file_name: String) -> String:
+	if level >= 2:
+		return "res://assets/upgrades/units/%s/%s_lv%d.png" % [color_key, file_name, level]
+	return "res://assets/units/%s/%s.png" % [color_key, file_name]
+
+## Nghiên cứu nông dân vừa lên cấp (Main gọi cho mọi nông dân đang sống).
+func refresh_level() -> void:
+	if main_ref == null or not main_ref.has_method("get_unit_level"):
+		return
+	var new_level: int = main_ref.get_unit_level(owner_pid, "pawn")
+	if new_level == level or _dead:
+		return
+	level = new_level
+	_apply_level_stats()
+	if _anim != null:
+		_anim.sprite_frames = _build_frames()
+		var cur := _cur_anim
+		_cur_anim = ""
+		_play(cur if cur != "" else "idle")
 
 func _ready() -> void:
 	add_to_group("villagers")
@@ -90,14 +124,16 @@ func _ready() -> void:
 func _build_frames() -> SpriteFrames:
 	var sf := SpriteFrames.new()
 	var base := "res://assets/units/%s/" % color_key
-	_add_anim(sf, "idle", base + "pawn_idle.png", 8, 8.0)
-	_add_anim(sf, "run", base + "pawn_run.png", 6, 10.0)
-	_add_anim(sf, "run_wood", base + "pawn_run_wood.png", 6, 10.0)
-	_add_anim(sf, "run_gold", base + "pawn_run_gold.png", 6, 10.0)
-	_add_anim(sf, "run_meat", base + "pawn_run_meat.png", 6, 10.0)
-	_add_anim(sf, "axe", base + "pawn_axe.png", 6, 10.0)
-	_add_anim(sf, "pick", base + "pawn_pick.png", 6, 10.0)
-	_add_anim(sf, "knife", base + "pawn_knife.png", 4, 10.0)
+	_add_anim(sf, "idle", _level_path("pawn_idle"), 8, 8.0)
+	_add_anim(sf, "run", _level_path("pawn_run"), 6, 10.0)
+	_add_anim(sf, "run_wood", _level_path("pawn_run_wood"), 6, 10.0)
+	_add_anim(sf, "run_gold", _level_path("pawn_run_gold"), 6, 10.0)
+	_add_anim(sf, "run_meat", _level_path("pawn_run_meat"), 6, 10.0)
+	_add_anim(sf, "axe", _level_path("pawn_axe"), 6, 10.0)
+	_add_anim(sf, "pick", _level_path("pawn_pick"), 6, 10.0)
+	_add_anim(sf, "knife", _level_path("pawn_knife"), 4, 10.0)
+	# Anim BÚA XÂY (hệ thợ xây của main): bộ vòng 4 KHÔNG có bản cấp 2/3
+	# cho pawn_hammer/pawn_run_hammer -> giữ đường gốc cấp 1 ở mọi cấp.
 	_add_anim(sf, "hammer", base + "pawn_hammer.png", 3, 10.0)
 	_add_anim(sf, "run_hammer", base + "pawn_run_hammer.png", 6, 10.0)
 	return sf

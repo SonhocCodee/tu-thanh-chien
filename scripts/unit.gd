@@ -19,6 +19,13 @@ var max_hp: float = 0.0
 var main_ref: Node = null
 var slot_offset: Vector2 = Vector2.ZERO
 
+# --- Cấp nghiên cứu theo loại (của phe chủ, nguồn: PlayerState.unit_levels) ---
+# Tu sĩ KHÔNG có nghiên cứu cấp: get_unit_level("monk") luôn trả 1 (không
+# có khoá "monk" trong unit_levels) nên mọi cơ chế dưới đây là no-op với
+# monk — level luôn 1, _apply_level_stats nhân hệ số 1.0.
+var level: int = 1
+var base_st: Dictionary = {} # chỉ số gốc cấp 1 (st = base * hệ số cấp)
+
 var _atk_timer: float = 0.0
 var _dead: bool = false
 var _last_attacker: int = -1
@@ -119,9 +126,11 @@ func setup(p_owner: int, p_type: String, p_color: String, p_main: Node, p_slot: 
 	owner_pid = p_owner
 	unit_type = p_type
 	color_key = p_color
-	st = Stats.unit_stats(p_type)
-	hp = st["hp"]
-	max_hp = hp
+	base_st = Stats.unit_stats(p_type).duplicate()
+	if p_main != null and p_main.has_method("get_unit_level"):
+		level = p_main.get_unit_level(p_owner, p_type)
+	_apply_level_stats()
+	hp = max_hp
 	main_ref = p_main
 	slot_offset = p_slot
 	# Lệch pha nhịp nghĩ/tách đàn theo id để cả đội không dồn tính toán 1 frame.
@@ -153,28 +162,64 @@ func _ready() -> void:
 		_threat_left = float(Stats.MONK_AI["threat_check_interval"]) \
 			* float(abs(get_instance_id()) % 7) / 7.0
 
+## Đường dẫn strip theo CẤP của quân này (cấp 2/3 = bộ vòng 4, cùng
+## canvas + cùng số frame như cấp 1 nên logic cắt frame không đổi).
+## CHỈ dùng cho warrior/lancer/archer — monk không có bộ cấp (giữ base).
+func _level_path(file_name: String) -> String:
+	if level >= 2:
+		return "res://assets/upgrades/units/%s/%s_lv%d.png" % [color_key, file_name, level]
+	return "res://assets/units/%s/%s.png" % [color_key, file_name]
+
+## Áp hệ số cấp (máu/sát thương trong Stats.UPGRADES) lên chỉ số gốc.
+func _apply_level_stats() -> void:
+	st = base_st.duplicate()
+	st["hp"] = float(base_st["hp"]) * float(Stats.UPGRADES["unit_hp_mult"][level - 1])
+	if st.has("damage"):
+		st["damage"] = float(base_st["damage"]) * float(Stats.UPGRADES["unit_dmg_mult"][level - 1])
+	max_hp = float(st["hp"])
+
+## Nghiên cứu loại quân này vừa lên cấp (Main gọi cho MỌI quân đang sống
+## của phe): cập nhật chỉ số (giữ tỉ lệ máu) + đổi cả bộ sprite tại chỗ.
+func refresh_level() -> void:
+	if main_ref == null or not main_ref.has_method("get_unit_level"):
+		return
+	var new_level: int = main_ref.get_unit_level(owner_pid, unit_type)
+	if new_level == level or _dead:
+		return
+	var frac := clampf(hp / max_hp, 0.0, 1.0) if max_hp > 0.0 else 1.0
+	level = new_level
+	_apply_level_stats()
+	hp = max_hp * frac
+	if _anim != null:
+		_anim.sprite_frames = _build_frames()
+		var cur := _cur_anim
+		_cur_anim = ""
+		_play(cur if cur != "" else "idle")
+	queue_redraw()
+
 func _build_frames() -> SpriteFrames:
 	var sf := SpriteFrames.new()
 	var base := "res://assets/units/%s/" % color_key
 	if unit_type == "warrior":
-		_add_anim(sf, "idle", base + "warrior_idle.png", 8, 8.0)
-		_add_anim(sf, "run", base + "warrior_run.png", 6, 10.0)
-		_add_anim(sf, "attack", base + "warrior_attack.png", 4, 10.0)
+		_add_anim(sf, "idle", _level_path("warrior_idle"), 8, 8.0)
+		_add_anim(sf, "run", _level_path("warrior_run"), 6, 10.0)
+		_add_anim(sf, "attack", _level_path("warrior_attack"), 4, 10.0)
 	elif unit_type == "lancer":
 		# Sheet Lancer của pack: frame 320x320 (Idle 12, Run 6,
 		# Right_Attack 3 — bản đánh ngang khớp cơ chế lật trái/phải sẵn có).
-		_add_anim(sf, "idle", base + "lancer_idle.png", 12, 8.0, 320.0)
-		_add_anim(sf, "run", base + "lancer_run.png", 6, 10.0, 320.0)
-		_add_anim(sf, "attack", base + "lancer_attack.png", 3, 8.0, 320.0)
+		_add_anim(sf, "idle", _level_path("lancer_idle"), 12, 8.0, 320.0)
+		_add_anim(sf, "run", _level_path("lancer_run"), 6, 10.0, 320.0)
+		_add_anim(sf, "attack", _level_path("lancer_attack"), 3, 8.0, 320.0)
 	elif unit_type == "monk":
 		# Sheet Monk của pack (frame 192): Idle 6, Run 4, Heal 11 frame.
+		# Monk KHÔNG có cấp nghiên cứu -> luôn dùng bộ gốc cấp 1.
 		_add_anim(sf, "idle", base + "monk_idle.png", 6, 8.0)
 		_add_anim(sf, "run", base + "monk_run.png", 4, 10.0)
 		_add_anim(sf, "heal", base + "monk_heal.png", 11, 12.0)
 	else:
-		_add_anim(sf, "idle", base + "archer_idle.png", 6, 8.0)
-		_add_anim(sf, "run", base + "archer_run.png", 4, 10.0)
-		_add_anim(sf, "attack", base + "archer_shoot.png", 8, 12.0)
+		_add_anim(sf, "idle", _level_path("archer_idle"), 6, 8.0)
+		_add_anim(sf, "run", _level_path("archer_run"), 4, 10.0)
+		_add_anim(sf, "attack", _level_path("archer_shoot"), 8, 12.0)
 	return sf
 
 func _add_anim(sf: SpriteFrames, anim_name: String, tex_path: String, frames: int, fps: float, frame_size: float = FRAME) -> void:
@@ -554,7 +599,7 @@ func _combat_unit(u: Unit, delta: float, player: PlayerState = null) -> void:
 		if _atk_timer <= 0.0:
 			_atk_timer = float(st["attack_cooldown"])
 			_play("attack")
-			main_ref.spawn_projectile(get_aim_point(), u, float(st["damage"]), owner_pid, float(st["projectile_speed"]), color_key)
+			main_ref.spawn_projectile(get_aim_point(), u, float(st["damage"]), owner_pid, float(st["projectile_speed"]), color_key, level)
 		_kite_away(u.global_position, delta, player)
 		return
 	if d <= range:
@@ -563,7 +608,7 @@ func _combat_unit(u: Unit, delta: float, player: PlayerState = null) -> void:
 		if _atk_timer <= 0.0:
 			_atk_timer = float(st["attack_cooldown"])
 			if unit_type == "archer":
-				main_ref.spawn_projectile(get_aim_point(), u, float(st["damage"]), owner_pid, float(st["projectile_speed"]), color_key)
+				main_ref.spawn_projectile(get_aim_point(), u, float(st["damage"]), owner_pid, float(st["projectile_speed"]), color_key, level)
 			else:
 				u.take_damage(float(st["damage"]), owner_pid)
 	else:
@@ -599,7 +644,7 @@ func _combat_structure(s: Structure, delta: float, player: PlayerState = null) -
 		if _atk_timer <= 0.0:
 			_atk_timer = float(st["attack_cooldown"])
 			if unit_type == "archer":
-				main_ref.spawn_projectile(get_aim_point(), s, float(st["damage"]), owner_pid, float(st["projectile_speed"]), color_key)
+				main_ref.spawn_projectile(get_aim_point(), s, float(st["damage"]), owner_pid, float(st["projectile_speed"]), color_key, level)
 			else:
 				s.take_damage(float(st["damage"]), owner_pid)
 	else:

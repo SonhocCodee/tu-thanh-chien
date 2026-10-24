@@ -11,6 +11,14 @@ var is_bot: bool = false
 var alive: bool = true
 
 var resources: Dictionary = {"wood": 0, "stone": 0, "gold": 0, "meat": 0}
+
+# --- Lên Đời + cấp quân (hệ nâng cấp) ---
+# age: Đời hiện tại của phe (1..3) — cổng khoá cho nâng cấp nhà/nghiên cứu
+# quân cấp 2/3. unit_levels: cấp nghiên cứu theo TỪNG LOẠI quân của phe
+# (áp cho mọi quân loại đó: đang sống + luyện sau). Tu sĩ KHÔNG có cấp
+# nghiên cứu (không có khoá "monk" ở đây — get_unit_level trả 1 mặc định).
+var age: int = 1
+var unit_levels: Dictionary = {"pawn": 1, "warrior": 1, "archer": 1, "lancer": 1}
 var allocation: Dictionary = {"wood": 0, "stone": 0, "gold": 0, "meat": 0} # số nông dân mong muốn theo việc
 var stance: String = "hold" # "hold" = giữ nhà | "attack" = tổng tấn công | "move" = đi tới điểm (trinh sát)
 var target_pid: int = -1
@@ -19,6 +27,9 @@ var move_point: Vector2 = Vector2.ZERO
 # Thống kê (phục vụ test/báo cáo)
 var units_trained_total: int = 0
 var buildings_completed_total: int = 0
+var ages_reached_total: int = 0 # số lần lên đời thành công
+var upgrades_completed_total: int = 0 # số nhà đã nâng cấp xong
+var researches_completed_total: int = 0 # số nghiên cứu quân đã xong
 var attacks_launched_total: int = 0
 var resources_gathered_total: int = 0
 

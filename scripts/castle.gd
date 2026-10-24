@@ -10,6 +10,13 @@ var highlight_target: bool = false
 var _sprite: Sprite2D
 var _tower_visual: Sprite2D
 var _pulse: float = 0.0
+var _base_tex_h: float = 0.0 # chiều cao texture thành Đời 1 (chuẩn hoá tỉ lệ Đời 2/3)
+
+## Đời hiện tại của phe chủ (nguồn sự thật ở PlayerState qua Main).
+func age() -> int:
+	if main_ref != null and main_ref.has_method("get_age"):
+		return main_ref.get_age(owner_pid)
+	return 1
 
 func setup(p_pid: int, p_color: String, p_name: String, p_main: Node) -> void:
 	owner_pid = p_pid
@@ -54,10 +61,22 @@ func _refresh_display() -> void:
 		return
 	if disp_destroyed():
 		_sprite.texture = load("res://assets/buildings/castle_destroyed.png")
+		_sprite.scale = Vector2(0.52, 0.52)
 		if _tower_visual != null:
 			_tower_visual.modulate = Color(0.4, 0.4, 0.4, 0.7)
 	else:
-		_sprite.texture = load("res://assets/buildings/castle_%s.png" % color_key)
+		# Sprite theo ĐỜI: Đời 1 = bản gốc Update 010; Đời 2/3 = bộ vòng 4.
+		var a := age()
+		var tex: Texture2D
+		if a >= 2:
+			tex = load("res://assets/upgrades/buildings/castle_%s_lv%d.png" % [color_key, a])
+		else:
+			tex = load("res://assets/buildings/castle_%s.png" % color_key)
+		_sprite.texture = tex
+		if tex != null and tex.get_height() > 0:
+			if _base_tex_h <= 0.0:
+				_base_tex_h = float(tex.get_height())
+			_sprite.scale = Vector2(0.52, 0.52) * (_base_tex_h / float(tex.get_height()))
 		if _tower_visual != null:
 			_tower_visual.modulate = Color.WHITE
 
@@ -84,6 +103,7 @@ func _process(delta: float) -> void:
 		_sprite.modulate = Color.WHITE
 	if not is_alive() or main_ref == null or main_ref.match_over:
 		return
+	_tick_research(delta)
 	_tick_production(delta)
 	_tick_tower(delta, Stats.CASTLE["tower_range"], Stats.CASTLE["tower_damage"], Stats.CASTLE["tower_cooldown"], Stats.CASTLE["projectile_speed"], tower_muzzle())
 

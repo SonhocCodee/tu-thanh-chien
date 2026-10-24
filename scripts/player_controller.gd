@@ -52,6 +52,23 @@ func order_move(point: Vector2) -> bool:
 		return false
 	return game.exec_order_move(player, point)
 
+# ===================== LÊN ĐỜI / NÂNG CẤP / NGHIÊN CỨU =====================
+
+func start_age_up(castle: Structure) -> bool:
+	if player == null or not player.alive or castle == null:
+		return false
+	return game.exec_start_age_up(player, castle)
+
+func start_unit_research(building: Structure, unit_type: String) -> bool:
+	if player == null or not player.alive or building == null:
+		return false
+	return game.exec_start_unit_research(player, building, unit_type)
+
+func start_building_upgrade(building: Building) -> bool:
+	if player == null or not player.alive or building == null:
+		return false
+	return game.exec_start_building_upgrade(player, building)
+
 # ===================== CHỢ (buôn bán tại Thành chính) =====================
 # Bán/mua 1 GÓI 100 đơn vị gỗ/đá/thịt <-> vàng theo giá chợ CỦA PHE MÌNH
 # (giá trôi theo cung cầu từng phe — xem Stats.MARKET / Main.exec_market_*).
@@ -84,6 +101,18 @@ func market_block_reason(res_key: String, is_sell: bool) -> String:
 # đều đi qua Main (lớp thực thi) như mọi lệnh cũ.
 
 var selected: Array = [] # Array[Node] (Unit/Villager của player này)
+var selected_structure: Structure = null # công trình đang chọn (panel nâng cấp/nghiên cứu)
+
+## Chọn 1 công trình của mình (HUD hiện panel Lên Đời / Nâng cấp / Nghiên
+## cứu). Chọn công trình thì bỏ chọn quân và ngược lại.
+func set_structure_selection(s: Structure) -> void:
+	set_selection([])
+	selected_structure = s
+
+func get_selected_structure() -> Structure:
+	if selected_structure != null and (not is_instance_valid(selected_structure) or not selected_structure.is_alive()):
+		selected_structure = null
+	return selected_structure
 
 func _prune_selection() -> void:
 	var kept: Array = []
@@ -96,6 +125,7 @@ func _prune_selection() -> void:
 	selected = kept
 
 func set_selection(units: Array) -> void:
+	selected_structure = null
 	for n in selected:
 		if n != null and is_instance_valid(n):
 			if n is Unit:
