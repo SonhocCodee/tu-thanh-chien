@@ -31,13 +31,19 @@ const BUILD_ART := {
 	"house": "res://assets/buildings/house_%s.png",
 	"barracks": "res://assets/buildings/barracks_%s.png",
 	"tower": "res://assets/buildings/tower_%s.png",
-	"storehouse": "res://assets/buildings/storehouse_%s.png",
+	"store_wood": "res://assets/buildings/store_wood_%s.png",
+	"store_stone": "res://assets/buildings/store_stone_%s.png",
+	"store_gold": "res://assets/buildings/store_gold_%s.png",
+	"store_meat": "res://assets/buildings/store_meat_%s.png",
 }
 const BUILD_DESC := {
 	"house": "Tăng giới hạn dân số.",
 	"barracks": "Nơi luyện kiếm sĩ và cung thủ, tốc độ nhanh hơn thành chính.",
 	"tower": "Tháp tự bắn tên vào địch trong tầm.",
-	"storehouse": "Điểm giao tài nguyên — đặt gần bãi farm để dân khỏi đi xa.",
+	"store_wood": "Chỉ chứa GỖ (tối đa 500). Dân vác gỗ nộp ở đây hoặc thành chính. Địch phá kho sẽ CƯỚP số gỗ trong kho!",
+	"store_stone": "Chỉ chứa ĐÁ (tối đa 500). Dân vác đá nộp ở đây hoặc thành chính. Địch phá kho sẽ CƯỚP số đá trong kho!",
+	"store_gold": "Chỉ chứa VÀNG (tối đa 500). Dân vác vàng nộp ở đây hoặc thành chính. Địch phá kho sẽ CƯỚP số vàng trong kho!",
+	"store_meat": "Chỉ chứa THỊT (tối đa 500). Dân vác thịt nộp ở đây hoặc thành chính. Địch phá kho sẽ CƯỚP số thịt trong kho!",
 }
 const UNIT_ART := {
 	"pawn": "res://assets/units/%s/pawn_idle.png",
@@ -812,7 +818,7 @@ func _build_help() -> void:
 		"LIA CAMERA: đưa chuột ra mép màn hình, phím WASD / mũi tên, hoặc bấm vào bản đồ nhỏ.",
 		"GIAO DIỆN: dải icon bên trái mở các tab Xây / Luyện / Dân. Phím Tab thu gọn/mở rộng panel, phím 1/2/3 mở tab tương ứng.",
 		"PHÂN BỔ: nút +/- ở tab Dân chia nông dân farm gỗ/đá/vàng/thịt — phân thịt là đi SĂN CỪU (lệnh click phải ưu tiên hơn phân bổ).",
-		"XÂY: bấm thẻ công trình ở tab Xây rồi bấm vào vùng sáng quanh thành. NHÀ KHO: điểm giao tài nguyên, đặt được ở mọi vùng đã khám phá. LUYỆN QUÂN: thẻ ở tab Luyện.",
+		"XÂY: bấm thẻ công trình ở tab Xây rồi bấm vào vùng sáng quanh thành. KHO CHUYÊN DỤNG: mỗi loại tài nguyên 1 kho riêng (gỗ/đá/vàng/thịt, chứa tối đa 500), đặt được ở mọi vùng đã khám phá — dân nộp đúng loại vào kho đó hoặc thành chính. PHÁ KHO ĐỊCH = CƯỚP tài nguyên đang chứa trong kho đó! LUYỆN QUÂN: thẻ ở tab Luyện.",
 		"THÁI ĐỘ: GIỮ NHÀ (quân ở nhà thủ) / TỔNG TẤN CÔNG (đánh thành địch đã lộ diện) — ở tab Luyện.",
 		"SƯƠNG MÙ: đen = chưa khám phá, mờ = đã qua (chỉ mờ đi, không đen lại), sáng = đang nhìn thấy.",
 	])

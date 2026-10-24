@@ -49,7 +49,10 @@ const GHOST_PRESENT := {
 	"house": [0.55, -28.0],
 	"barracks": [0.5, -38.0],
 	"tower": [0.45, -52.0],
-	"storehouse": [0.6, -30.0],
+	"store_wood": [0.6, -30.0],
+	"store_stone": [0.6, -30.0],
+	"store_gold": [0.38, -26.0],
+	"store_meat": [0.46, -28.0],
 }
 
 # --- M2: camera + chọn quân ---
@@ -67,6 +70,10 @@ var _m2demo_timer: float = 0.0
 var g2demo_mode: bool = false
 var _g2demo_stage: int = 0
 var _g2demo_timer: float = 0.0
+var storedemo_mode: bool = false
+var _storedemo_stage: int = 0
+var _storedemo_timer: float = 0.0
+var _storedemo_enemy: Building = null
 var _g2_tree: ResourceNode = null
 var _g2_hunter: Villager = null
 var _g2_store: Building = null
@@ -98,6 +105,10 @@ func _ready() -> void:
 		g2demo_mode = true
 		bots_enabled = false
 		Engine.time_scale = 3.0
+	if "--storedemo" in args:
+		storedemo_mode = true
+		bots_enabled = false
+		Engine.time_scale = 2.0
 	_build_players()
 	_build_map()
 	_build_resource_nodes()
@@ -112,7 +123,7 @@ func _ready() -> void:
 		# Sân khấu demo (chỉ để chụp ảnh kiểm chứng): cấp thêm tài nguyên cho mọi phe.
 		for p in players:
 			for k in Stats.RES_KEYS:
-				p.resources[k] = int(p.resources[k]) + 500
+				grant_resource(p.pid, k, 500)
 
 func _process(delta: float) -> void:
 	if not match_over:
@@ -129,6 +140,8 @@ func _process(delta: float) -> void:
 		_demo_m2_update(delta)
 	if g2demo_mode:
 		_demo_g2_update(delta)
+	if storedemo_mode:
+		_demo_store_update(delta)
 
 # ===================== DỰNG BAN ĐẦU =====================
 
@@ -327,11 +340,18 @@ func sheep_at(pos: Vector2, radius: float) -> Sheep:
 			best = s
 	return best
 
-# ===================== KHO (điểm giao tài nguyên) =====================
+# ===================== KHO (điểm giao tài nguyên) + SỔ CHỨA =====================
+# Hệ kho kiểu Clash of Clans: thành chính = kho TỔNG (nhận mọi loại, không
+# giới hạn); mỗi kho chuyên dụng CHỈ nhận đúng loại của nó và có sức chứa.
+# Lượng chứa trong từng công trình (Structure.stored) là SỔ THẬT: tổng tài
+# nguyên của phe (player.resources, cái HUD/bot/giá cả đọc) LUÔN bằng
+# thành + tổng các kho. Mọi cộng/trừ đi qua 3 điểm tập trung dưới đây:
+# deposit_to (nộp hàng), spend_resources (chi tiêu), _loot_structure (cướp).
 
-## Kho GẦN NHẤT của 1 phe: thành chính hoặc Nhà Kho đã xây xong còn đứng.
-## Nông dân chỉ được cộng tài nguyên khi vác về TỚI 1 kho như thế này.
-func nearest_dropoff(pid: int, from_pos: Vector2) -> Node2D:
+## Điểm giao GẦN NHẤT của 1 phe CHO ĐÚNG LOẠI res_key: kho chuyên dụng đúng
+## loại còn chỗ trống, hoặc thành chính (luôn nhận). Kho đầy thì tự rơi xuống
+## điểm hợp lệ tiếp theo — không bao giờ kẹt vì thành chính không giới hạn.
+func nearest_dropoff(pid: int, from_pos: Vector2, res_key: String) -> Node2D:
 	var best: Node2D = null
 	var best_d := 1e9
 	if castles.has(pid):
@@ -341,12 +361,76 @@ func nearest_dropoff(pid: int, from_pos: Vector2) -> Node2D:
 			best_d = from_pos.distance_to(castle.global_position)
 	for n in get_tree().get_nodes_in_group("buildings"):
 		var b := n as Building
-		if b.owner_pid == pid and b.is_valid_dropoff():
+		if b.owner_pid == pid and b.is_valid_dropoff() and b.can_accept(res_key):
 			var d := from_pos.distance_to(b.global_position)
 			if d < best_d:
 				best_d = d
 				best = b
 	return best
+
+## Nộp `amount` tài nguyên loại res_key vào ĐÚNG công trình kho s.
+## Trả về số THỰC nộp được (kho chuyên dụng gần đầy -> nộp một phần).
+## Cộng đồng thời vào sổ của công trình và tổng của phe (qua add_resource).
+func deposit_to(s: Structure, res_key: String, amount: int) -> int:
+	if s == null or not is_instance_valid(s):
+		return 0
+	var put: int = mini(amount, s.free_space(res_key))
+	if put <= 0:
+		return 0
+	s.stored[res_key] = s.stored_amount(res_key) + put
+	players[s.owner_pid].add_resource(res_key, put)
+	return put
+
+## Chi tiêu TẬP TRUNG cho xây/luyện: trừ sổ theo thứ tự THÀNH CHÍNH trước,
+## rồi tới các kho chuyên dụng; tổng của phe trừ qua PlayerState.pay.
+## Trả false (không trừ gì) nếu không đủ tổng tài nguyên.
+func spend_resources(player: PlayerState, cost: Dictionary) -> bool:
+	if not player.can_afford(cost):
+		return false
+	for k in cost.keys():
+		var need := int(cost[k])
+		if need <= 0:
+			continue
+		var castle := castles.get(player.pid) as Castle
+		if castle != null:
+			var take := mini(need, castle.stored_amount(k))
+			if take > 0:
+				castle.stored[k] = castle.stored_amount(k) - take
+				need -= take
+		if need > 0:
+			for n in get_tree().get_nodes_in_group("buildings"):
+				var b := n as Building
+				if b.owner_pid == player.pid and b.is_storage():
+					var take2 := mini(need, b.stored_amount(k))
+					if take2 > 0:
+						b.stored[k] = b.stored_amount(k) - take2
+						need -= take2
+					if need <= 0:
+						break
+	player.pay(cost)
+	return true
+
+## Tổng lượng đang chứa trong mọi kho của 1 phe, theo loại.
+## Bất biến sổ: phải luôn bằng player.resources của phe đó.
+func total_stored(pid: int) -> Dictionary:
+	var tot := {"wood": 0, "stone": 0, "gold": 0, "meat": 0}
+	var castle := castles.get(pid) as Castle
+	if castle != null:
+		for k in Stats.RES_KEYS:
+			tot[k] = int(tot[k]) + castle.stored_amount(k)
+	for n in get_tree().get_nodes_in_group("buildings"):
+		var b := n as Building
+		if b.owner_pid == pid and b.is_storage():
+			for k in Stats.RES_KEYS:
+				tot[k] = int(tot[k]) + b.stored_amount(k)
+	return tot
+
+## Cấp tài nguyên thẳng vào thành chính (chỉ dùng cho sân khấu demo chụp ảnh).
+func grant_resource(pid: int, res_key: String, amount: int) -> void:
+	var castle := castles.get(pid) as Castle
+	if castle != null:
+		castle.stored[res_key] = castle.stored_amount(res_key) + amount
+	players[pid].add_resource(res_key, amount)
 
 func _build_castles() -> void:
 	for pid in CASTLE_POS.keys():
@@ -357,6 +441,10 @@ func _build_castles() -> void:
 		add_child(castle)
 		castle.structure_destroyed.connect(_on_structure_destroyed)
 		castles[pid] = castle
+		# Tài nguyên khởi đầu nằm trong THÀNH CHÍNH (kho tổng) — sổ chứa
+		# khởi tạo bằng đúng tổng resources mà PlayerState đã nhận.
+		for k in Stats.RES_KEYS:
+			castle.stored[k] = int(players[pid].resources[k])
 
 func _build_start_villagers() -> void:
 	for pid in CASTLE_POS.keys():
@@ -388,7 +476,7 @@ func _build_hud() -> void:
 	_hud.setup(self, human_controller())
 	add_child(_hud)
 	# Panel hướng dẫn tự mở khi vào trận (trừ chế độ demo chụp ảnh).
-	if not demo_mode and not m2demo_mode and not g2demo_mode:
+	if not demo_mode and not m2demo_mode and not g2demo_mode and not storedemo_mode:
 		_hud.show_help()
 
 # ===================== SƯƠNG MÙ =====================
@@ -542,12 +630,23 @@ func build_slots(pid: int) -> Array:
 		c + Vector2(mx * -105, my * 80),
 		c + Vector2(mx * 30, my * -102),
 		c + Vector2(mx * 30, my * 102),
-		c + Vector2(mx * -175, 0), # ô cho Nhà Kho (đặt ngoài vùng căn cứ cũng được)
+		c + Vector2(mx * -175, 0), # ô cũ của Nhà Kho (giữ trống)
+		# 4 ô kho chuyên dụng (bot xây lần lượt Gỗ -> Vàng -> Đá -> Thịt).
+		# Đã kiểm: cách mọi công trình >= 62, node >= 48, cừu >= 40 ở cả 4 góc,
+		# và nằm trong tầm nhìn thành (265) nên thuộc vùng đã khám phá.
+		c + Vector2(mx * -175, my * -95),
+		c + Vector2(mx * -175, my * 95),
+		c + Vector2(mx * 105, my * -115),
+		c + Vector2(mx * 150, my * 110),
 	]
+
+## Công trình này có phải KHO chuyên dụng không (khai "storage_res" trong Stats).
+func is_warehouse_type(building_type: String) -> bool:
+	return Stats.BUILDINGS.get(building_type, {}).has("storage_res")
 
 ## Luật đặt nhà DÙNG CHUNG — 1 nguồn luật duy nhất cho click đặt thật
 ## (exec_place_building) và bóng ma xem trước (placement preview).
-## true = đặt được tại pos: còn đủ tiền, đúng vùng (Nhà Kho: vùng ĐÃ KHÁM PHÁ;
+## true = đặt được tại pos: còn đủ tiền, đúng vùng (kho: vùng ĐÃ KHÁM PHÁ;
 ## nhà thường: vùng căn cứ), không quá gần công trình (62) / node (48) / cừu (40).
 func can_place_building(player: PlayerState, building_type: String, pos: Vector2) -> bool:
 	if not Stats.BUILDINGS.has(building_type):
@@ -555,9 +654,9 @@ func can_place_building(player: PlayerState, building_type: String, pos: Vector2
 	var def: Dictionary = Stats.BUILDINGS[building_type]
 	if not player.can_afford(def["cost"]):
 		return false
-	if building_type == "storehouse":
-		# Nhà Kho: đặt ở bất cứ vùng ĐÃ KHÁM PHÁ nào của phe mình (để kê
-		# gần bãi farm xa), không giới hạn vùng căn cứ như nhà thường.
+	if is_warehouse_type(building_type):
+		# Kho chuyên dụng: đặt ở bất cứ vùng ĐÃ KHÁM PHÁ nào của phe mình
+		# (để kê gần bãi farm xa), không giới hạn vùng căn cứ như nhà thường.
 		if not is_pos_explored_for(player.pid, pos):
 			return false
 	elif not base_zone(player.pid).has_point(pos):
@@ -578,7 +677,7 @@ func exec_place_building(player: PlayerState, building_type: String, pos: Vector
 	if not can_place_building(player, building_type, pos):
 		return false
 	var def: Dictionary = Stats.BUILDINGS[building_type]
-	player.pay(def["cost"])
+	spend_resources(player, def["cost"])
 	var b := BuildingScene.instantiate() as Building
 	b.setup(player.pid, building_type, player.color_key, self)
 	b.position = pos
@@ -598,7 +697,7 @@ func exec_queue_training(player: PlayerState, building: Structure, unit_type: St
 		return false
 	if pop_used(player.pid) + 1 > pop_cap(player.pid):
 		return false
-	player.pay(def["cost"])
+	spend_resources(player, def["cost"])
 	building.enqueue(unit_type, float(def["time"]) / float(prod["speed"]))
 	return true
 
@@ -881,7 +980,8 @@ func _villagers_of(pid: int) -> Array:
 	return out
 
 func building_counts(pid: int) -> Dictionary:
-	var counts := {"house": 0, "barracks": 0, "tower": 0, "storehouse": 0}
+	var counts := {"house": 0, "barracks": 0, "tower": 0,
+		"store_wood": 0, "store_stone": 0, "store_gold": 0, "store_meat": 0}
 	for n in get_tree().get_nodes_in_group("buildings"):
 		var b := n as Building
 		if b.owner_pid == pid and b.is_alive():
@@ -977,8 +1077,51 @@ func spawn_explosion(pos: Vector2, scale_factor: float = 1.0) -> void:
 
 func _on_structure_destroyed(s: Structure) -> void:
 	spawn_explosion(s.global_position, 1.2 if s is Castle else 0.8)
+	_loot_structure(s)
 	if s is Castle:
 		_eliminate_player(s.owner_pid)
+
+## CƯỚP KHO (kiểu Clash of Clans): kho/thành bị phá -> phe tấn công nhận
+## TOÀN BỘ lượng đang chứa trong công trình đó (cộng vào THÀNH CHÍNH của
+## phe tấn công — không giới hạn nên không bao giờ mất phần cướp vì đầy).
+## Công trình không phải kho thì không có gì để cướp. Phần chứa của nạn
+## nhân trừ tương ứng; không có kẻ phá hợp lệ (đòn tự huỷ/test) thì phần
+## chứa cháy theo công trình.
+func _loot_structure(s: Structure) -> void:
+	if not s.is_storage():
+		return
+	var loot := {}
+	for k in Stats.RES_KEYS:
+		var amt := s.stored_amount(k)
+		if amt > 0:
+			loot[k] = amt
+	if loot.is_empty():
+		return
+	var victim: PlayerState = players[s.owner_pid]
+	for k in loot.keys():
+		victim.resources[k] = int(victim.resources[k]) - int(loot[k])
+		s.stored[k] = 0
+	var atk_pid := s.last_attacker_pid
+	if atk_pid < 0 or atk_pid == s.owner_pid or atk_pid >= players.size() or not players[atk_pid].alive:
+		return
+	var atk_castle := castles.get(atk_pid) as Castle
+	if atk_castle == null or not atk_castle.is_alive():
+		return
+	for k in loot.keys():
+		atk_castle.stored[k] = atk_castle.stored_amount(k) + int(loot[k])
+		players[atk_pid].resources[k] = int(players[atk_pid].resources[k]) + int(loot[k])
+	# Báo cho 2 phía liên quan nếu là người chơi (bot đánh nhau thì bỏ qua).
+	if _hud != null:
+		var parts: Array[String] = []
+		for k in Stats.RES_KEYS:
+			if loot.has(k):
+				parts.append("%d %s" % [int(loot[k]), str(Stats.RES_LABELS[k]).to_lower()])
+		var loot_text := ", ".join(parts)
+		var sname := "Thành chính" if s is Castle else str(Stats.BUILDINGS[(s as Building).building_type]["label"])
+		if s.owner_pid == HUMAN_PID:
+			_hud.show_message("%s bị phá! Địch cướp mất: %s." % [sname, loot_text])
+		elif atk_pid == HUMAN_PID:
+			_hud.show_message("Cướp được %s từ %s của địch!" % [loot_text, sname])
 
 func on_building_completed(b: Building) -> void:
 	players[b.owner_pid].buildings_completed_total += 1
@@ -995,11 +1138,16 @@ func _eliminate_player(pid: int) -> void:
 	for n in get_tree().get_nodes_in_group("villagers"):
 		if (n as Villager).owner_pid == pid:
 			n.queue_free()
-	# Công trình còn lại thành tàn tích.
+	# Công trình còn lại thành tàn tích; sổ chứa của chúng cháy theo
+	# (phe đã bị loại thì tổng tài nguyên cũng về 0 cho sổ sách sạch).
 	for n in get_tree().get_nodes_in_group("buildings"):
 		var b := n as Building
 		if b.owner_pid == pid and b.is_alive():
 			b.force_ruin()
+			for k in Stats.RES_KEYS:
+				b.stored[k] = 0
+	for k in Stats.RES_KEYS:
+		player.resources[k] = 0
 	# Phe khác đang nhắm vào phe này thì về giữ nhà.
 	for p in players:
 		if p.alive and p.target_pid == pid:
@@ -1030,11 +1178,13 @@ func _end_match(won: bool) -> void:
 func set_placement_mode(building_type: String) -> void:
 	placing_type = building_type
 	awaiting_order = false
-	if building_type == "storehouse":
-		# Nhà Kho đặt được ở mọi vùng đã khám phá -> không hiện khung vùng căn cứ.
+	if is_warehouse_type(building_type):
+		# Kho chuyên dụng đặt được ở mọi vùng đã khám phá -> không hiện khung vùng căn cứ.
 		_zone_rect.visible = false
 		if _hud != null:
-			_hud.show_message("Bấm vào vùng ĐÃ KHÁM PHÁ bất kỳ để đặt Nhà Kho — điểm giao tài nguyên (chuột phải để huỷ).")
+			var res_key := str(Stats.BUILDINGS[building_type]["storage_res"])
+			_hud.show_message("Bấm vào vùng ĐÃ KHÁM PHÁ bất kỳ để đặt %s — điểm giao %s (chuột phải để huỷ)." % [
+				str(Stats.BUILDINGS[building_type]["label"]), str(Stats.RES_LABELS[res_key]).to_lower()])
 		return
 	_zone_rect.polygon = PackedVector2Array([
 		base_zone(HUMAN_PID).position,
@@ -1380,7 +1530,7 @@ func _demo_g2_update(delta: float) -> void:
 	var castle_pos: Vector2 = castles[HUMAN_PID].global_position
 	match _g2demo_stage:
 		0:
-			p0.resources["wood"] = int(p0.resources["wood"]) + 500
+			grant_resource(HUMAN_PID, "wood", 500)
 			var vils := _g2_villagers()
 			# Cây gần thành: để trữ lượng nhỏ cho cạn nhanh.
 			_g2_tree = nearest_resource_node(HUMAN_PID, "wood", castle_pos) as ResourceNode
@@ -1391,11 +1541,11 @@ func _demo_g2_update(delta: float) -> void:
 			var sheep := nearest_sheep(HUMAN_PID, castle_pos)
 			if sheep != null:
 				exec_direct_farm(p0, _g2_hunter, sheep)
-			# Nhà Kho cạnh mỏ vàng nhỏ + dân 3 farm vàng (giao về kho này).
-			exec_place_building(p0, "storehouse", castle_pos + Vector2(185, -140))
+			# Kho Vàng cạnh mỏ vàng nhỏ + dân 3 farm vàng (giao về kho này).
+			exec_place_building(p0, "store_gold", castle_pos + Vector2(185, -140))
 			for n in get_tree().get_nodes_in_group("buildings"):
 				var b := n as Building
-				if b.owner_pid == HUMAN_PID and b.building_type == "storehouse":
+				if b.owner_pid == HUMAN_PID and b.building_type == "store_gold":
 					_g2_store = b
 					b.constructed = true
 			var gold_node := nearest_resource_node(HUMAN_PID, "gold", castle_pos)
@@ -1453,7 +1603,7 @@ func _demo_g2_update(delta: float) -> void:
 		6:
 			_g2demo_timer += delta
 			if _g2demo_timer > 0.6:
-				_take_shot("res://screenshots/g2_nha_kho.png")
+				_take_shot("res://screenshots/g2_kho_vang.png")
 				_g2demo_timer = 0.0
 				_g2demo_stage = 7
 		7:
@@ -1475,6 +1625,75 @@ func _demo_g2_update(delta: float) -> void:
 				_take_shot("res://screenshots/g2_mo_destroyed.png")
 				_g2demo_stage = 9
 		9:
+			get_tree().quit()
+
+# ===================== DEMO KHO (chạy với -- --storedemo, không bot) ====
+# Sân khấu chụp ảnh cho hệ kho chuyên dụng: 4 kho cạnh nhau (thấy biển hiệu
+# từng loại) -> phá Kho Vàng địch chứa 260 vàng, thông báo cướp hiện lên.
+
+func _demo_store_update(delta: float) -> void:
+	if elapsed > 120.0:
+		get_tree().quit()
+		return
+	var p0: PlayerState = players[HUMAN_PID]
+	match _storedemo_stage:
+		0:
+			grant_resource(HUMAN_PID, "wood", 3000)
+			var base: Vector2 = CASTLE_POS[HUMAN_PID] + Vector2(-120, -160)
+			var types := ["store_wood", "store_stone", "store_gold", "store_meat"]
+			for i in 4:
+				if exec_place_building(p0, types[i], base + Vector2(i * 110, 0)):
+					for n in get_tree().get_nodes_in_group("buildings"):
+						var b := n as Building
+						if b.owner_pid == HUMAN_PID and b.building_type == types[i]:
+							b.constructed = true
+							b._refresh_display()
+			set_camera_to(Vector2(640, 600))
+			_storedemo_timer = 0.8
+			_storedemo_stage = 1
+		1:
+			_storedemo_timer -= delta
+			if _storedemo_timer <= 0.0:
+				_take_shot("res://screenshots/store_4_kho.png")
+				_storedemo_stage = 2
+		2:
+			# Kho Vàng của địch (pid 1) chứa sẵn 260 vàng (sổ phe địch tăng
+			# tương ứng), dựng cạnh căn cứ người chơi + 3 kiếm sĩ vây quanh.
+			var p1: PlayerState = players[1]
+			var eb := BuildingScene.instantiate() as Building
+			eb.setup(1, "store_gold", p1.color_key, self)
+			eb.position = CASTLE_POS[HUMAN_PID] + Vector2(340, -80)
+			eb.z_index = 5
+			add_child(eb)
+			eb.structure_destroyed.connect(_on_structure_destroyed)
+			eb.constructed = true
+			eb._refresh_display()
+			eb.stored["gold"] = 260
+			p1.resources["gold"] = int(p1.resources["gold"]) + 260
+			_storedemo_enemy = eb
+			for i in 3:
+				var u := UnitScene.instantiate() as Unit
+				u.setup(HUMAN_PID, "warrior", p0.color_key, self, Vector2.ZERO)
+				u.position = eb.position + Vector2(-70 + i * 55, 55)
+				u.z_index = 10
+				_units_layer.add_child(u)
+				u.died.connect(_on_unit_died)
+			set_camera_to(Vector2(640, 600))
+			_storedemo_timer = 0.8
+			_storedemo_stage = 3
+		3:
+			_storedemo_timer -= delta
+			if _storedemo_timer <= 0.0:
+				# Phá kho ngay trước lúc chụp: nổ + thông báo cướp.
+				_storedemo_enemy.take_damage(99999.0, HUMAN_PID)
+				_storedemo_timer = 0.35
+				_storedemo_stage = 4
+		4:
+			_storedemo_timer -= delta
+			if _storedemo_timer <= 0.0:
+				_take_shot("res://screenshots/store_cuop_kho.png")
+				_storedemo_stage = 5
+		5:
 			get_tree().quit()
 
 # ===================== LỚP PHỦ SƯƠNG MÙ (vẽ cho người chơi) =====================

@@ -100,7 +100,8 @@ func _decide() -> void:
 		if int(player.allocation["wood"]) != w or int(player.allocation["stone"]) != s or int(player.allocation["gold"]) != g or int(player.allocation["meat"]) != m:
 			ctrl.set_villager_allocation(w, s, g, m)
 
-	# 3) Xây dựng theo thứ tự: Nhà -> Doanh trại -> Tháp -> Nhà Kho -> Nhà 2.
+	# 3) Xây dựng theo thứ tự: Nhà -> Doanh trại -> Tháp -> 4 kho chuyên
+	# dụng (Gỗ -> Vàng -> Đá -> Thịt, ô 5..8) -> Nhà 2.
 	var counts := counts0
 	var slots: Array = game.build_slots(player.pid)
 	if int(counts.get("house", 0)) == 0:
@@ -109,8 +110,14 @@ func _decide() -> void:
 		ctrl.place_building("barracks", slots[1])
 	elif int(counts.get("tower", 0)) == 0:
 		ctrl.place_building("tower", slots[2])
-	elif int(counts.get("storehouse", 0)) == 0:
-		ctrl.place_building("storehouse", slots[4])
+	elif int(counts.get("store_wood", 0)) == 0:
+		ctrl.place_building("store_wood", slots[5])
+	elif int(counts.get("store_gold", 0)) == 0:
+		ctrl.place_building("store_gold", slots[6])
+	elif int(counts.get("store_stone", 0)) == 0:
+		ctrl.place_building("store_stone", slots[7])
+	elif int(counts.get("store_meat", 0)) == 0:
+		ctrl.place_building("store_meat", slots[8])
 	elif int(counts.get("house", 0)) < 2:
 		ctrl.place_building("house", slots[3])
 

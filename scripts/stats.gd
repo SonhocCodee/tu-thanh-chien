@@ -85,15 +85,47 @@ const BUILDINGS := {
 		"tower_cooldown": 1.1,
 		"projectile_speed": 470.0,
 	},
-	# Nhà Kho: điểm giao tài nguyên (drop-off) phụ cạnh thành chính — nhận MỌI
-	# tài nguyên kể cả vàng. Không sản xuất, không cộng dân số. Đặt được ở mọi
-	# vùng ĐÃ KHÁM PHÁ (không giới hạn vùng căn cứ) để kê gần bãi farm.
-	"storehouse": {
-		"label": "Nhà Kho",
+	# KHO CHUYÊN DỤNG (kiểu Clash of Clans): mỗi loại tài nguyên 1 kho riêng,
+	# CHỈ chứa đúng loại của nó, có SỨC CHỨA (storage_capacity). Thành chính là
+	# kho TỔNG: nhận mọi loại, không giới hạn. Kho bị phá -> phe tấn công cướp
+	# toàn bộ lượng đang chứa trong kho đó. Không sản xuất, không cộng dân số.
+	# Đặt được ở mọi vùng ĐÃ KHÁM PHÁ (không giới hạn vùng căn cứ) để kê gần
+	# bãi farm. "storage_res" = khoá loại kho chứa; có khoá này = là kho.
+	"store_wood": {
+		"label": "Kho Gỗ",
 		"cost": {"wood": 80},
 		"build_time": 10.0,
 		"hp": 300.0,
 		"radius": 40.0,
+		"storage_res": "wood",
+		"storage_capacity": 500,
+	},
+	"store_stone": {
+		"label": "Kho Đá",
+		"cost": {"wood": 80},
+		"build_time": 10.0,
+		"hp": 300.0,
+		"radius": 40.0,
+		"storage_res": "stone",
+		"storage_capacity": 500,
+	},
+	"store_gold": {
+		"label": "Kho Vàng",
+		"cost": {"wood": 80},
+		"build_time": 10.0,
+		"hp": 300.0,
+		"radius": 40.0,
+		"storage_res": "gold",
+		"storage_capacity": 500,
+	},
+	"store_meat": {
+		"label": "Kho Thịt",
+		"cost": {"wood": 80},
+		"build_time": 10.0,
+		"hp": 300.0,
+		"radius": 40.0,
+		"storage_res": "meat",
+		"storage_capacity": 500,
 	},
 }
 

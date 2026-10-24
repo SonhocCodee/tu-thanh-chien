@@ -61,6 +61,16 @@ func _refresh_display() -> void:
 		if _tower_visual != null:
 			_tower_visual.modulate = Color.WHITE
 
+# --- Thành chính = kho TỔNG: nhận mọi loại, sức chứa không giới hạn ---
+func is_storage() -> bool:
+	return true
+
+func storage_res() -> String:
+	return ""
+
+func storage_capacity() -> int:
+	return -1
+
 func tower_muzzle() -> Vector2:
 	return global_position + Vector2(64, -95)
 
