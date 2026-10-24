@@ -2,27 +2,55 @@ TU THANH CHIEN — HUONG DAN CHU NHA (CHOI QUA MANG LAN)
 =======================================================
 
 GOI NAY CO GI:
-  server/        Chuong trinh may chu (giu toan bo tran dau)
+  server/        Chuong trinh may chu (giu toan bo tran dau):
+                   - tu-thanh-chien-win.exe + tu-thanh-chien-win.console.exe
+                     + tu-thanh-chien-win.pck   (cho may Windows)
+                   - tu-thanh-chien.x86_64 + tu-thanh-chien.pck (cho may Linux)
   web/           Ban game cho trinh duyet (may chu tu phuc vu)
-  start_host.bat / start_host.sh   File khoi dong — chi can chay 1 file nay
+  start_host.bat (Windows) / start_host.sh (Linux)
+                 File khoi dong — chi can chay 1 file nay, dung chay
+                 thang file trong server/.
 
-3 BUOC DE CHOI:
-  1. Tren may chu nha: chay start_host.bat (Windows) hoac
-     start_host.sh (Linux/macOS). Cua so hien dia chi IP LAN cua may.
-     - Lan dau Windows hoi quyen tuong lua -> bam "Allow access"
-       (chon mang Private neu duoc hoi).
-  2. Gui cho ban be CUNG MANG LAN (cung wifi/router) duong dan:
-        http://<IP-cua-ban>:8911/?lan=1
-     Vi du: http://192.168.1.8:8911/?lan=1
-     Ban be chi can mo bang trinh duyet (Chrome/Edge/Firefox),
-     KHONG can cai gi them, KHONG can tai khoan.
-  3. Chu nha choi cung: mo trinh duyet tren chinh may minh toi
-        http://localhost:8911/?lan=1
-     Trong phong cho: nguoi ket noi dau tien la CHU PHONG.
-     Moi nguoi bam SAN SANG, chu phong bam BAT DAU TRAN.
-     Slot trong se do BOT lap (toi da 4 phe).
+=======================================================
+A. MAY CHU NHA LA WINDOWS (lam theo thu tu)
+=======================================================
+  Buoc 1: Giai nen goi (neu nhan dang file nen) roi mo thu muc
+          goi-chu-nha. NHAN DUP (double-click) vao file:
+              start_host.bat
+          - Neu Windows hien hop "Windows protected your PC"
+            (SmartScreen — vi chuong trinh chua co chu ky so, binh
+            thuong): bam "More info" -> bam "Run anyway".
+  Buoc 2: Windows Firewall hoi quyen mang (chi hoi lan dau):
+          TICH o "Private networks" (mang rieng) roi bam
+          "Allow access". Khong bam thi ban be khong vao duoc.
+  Buoc 3: Cua so den hien cac dong "IPv4 Address . . . : 192.168.x.x"
+          — do la IP LAN cua may ban. Hay nho so nay.
+          (Neu co nhieu dong: chon dong bat dau bang 192.168. hoac
+          10. — dong dang 172. la cua may ao/VPN, dung gui dong do.)
+  Buoc 4: Gui cho ban be CUNG WIFI voi ban duong dan:
+              http://<IP-o-buoc-3>:8911/?lan=1
+          Vi du: http://192.168.1.8:8911/?lan=1
+          Ban be chi can mo bang trinh duyet (Chrome/Edge/Firefox),
+          KHONG can cai gi them, KHONG can tai khoan.
+  Buoc 5: Ban (chu nha) choi cung: mo trinh duyet tren chinh may
+          minh toi:
+              http://localhost:8911/?lan=1
+  Buoc 6: Trong phong cho: nguoi ket noi dau tien la CHU PHONG.
+          Moi nguoi bam SAN SANG, chu phong bam BAT DAU TRAN.
+          Slot trong se do BOT lap (toi da 4 phe).
+  Luu y: GIU cua so den cua start_host.bat mo suot tran —
+         tat cua so = may chu tat = tran dung.
 
-LUU Y:
+=======================================================
+B. MAY CHU NHA LA LINUX
+=======================================================
+  Mo terminal trong thu muc goi-chu-nha, chay:  ./start_host.sh
+  Cua so in san duong dan co IP LAN de gui ban be.
+  Cac buoc vao phong (4-6 o tren) giong het Windows.
+
+=======================================================
+LUU Y CHUNG
+=======================================================
   - Dung tat cua so may chu giua tran: may chu tat = tran dung.
   - Ai rot mang giua tran: vao lai cung duong dan trong vong 60 giay
     se duoc tra lai dung phe cua minh (game tu nho bang token).
@@ -33,3 +61,6 @@ LUU Y:
     them http://<IP-cua-ban>:8911 vao o trong, chon Enabled, mo lai
     trinh duyet. (Ban trong goi da duoc va san phan kiem tra nay,
     day chi la du phong.)
+  - Ban be mo link ma khong vao duoc: kiem tra (1) cung 1 wifi,
+    (2) da bam Allow o Buoc 2 chua, (3) IP go dung chua,
+    (4) cua so may chu con mo khong.
