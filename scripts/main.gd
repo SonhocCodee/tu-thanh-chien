@@ -751,6 +751,9 @@ func nearest_resource_node(pid: int, res_type: String, from_pos: Vector2) -> Nod
 		var node := n as ResourceNode
 		if node.res_type != res_type:
 			continue
+		# Điểm đã cạn (gốc cây/mỏ sập) thì bỏ qua — chờ hồi (nếu có) mới dùng lại.
+		if node.is_depleted():
+			continue
 		# Nông dân chỉ tới điểm tài nguyên thuộc vùng ĐÃ KHÁM PHÁ của phe mình.
 		if not fog.is_explored_pos(node.global_position):
 			continue

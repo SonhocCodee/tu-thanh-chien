@@ -12,8 +12,15 @@ var owner_pid: int = -1
 var color_key: String = "blue"
 var st: Dictionary = {}
 var hp: float = 0.0
+var max_hp: float = 0.0
 var main_ref: Node = null
 var idle_offset: Vector2 = Vector2.ZERO
+
+# AI bỏ chạy (Stats.VILLAGER_AI): bị đánh hoặc quân địch áp sát -> chạy về
+# thành một lúc rồi QUAY LẠI việc cũ (kể cả lệnh trực tiếp — không huỷ lệnh).
+var _flee_left: float = 0.0
+var _resume_state: String = ""
+var _threat_left: float = 0.0
 
 var assigned: String = "" # "" | "wood" | "stone" | "gold"
 var carrying_type: String = ""
@@ -40,6 +47,7 @@ func setup(p_owner: int, p_color: String, p_main: Node, p_idle_offset: Vector2) 
 	color_key = p_color
 	st = Stats.unit_stats("pawn")
 	hp = st["hp"]
+	max_hp = hp
 	main_ref = p_main
 	idle_offset = p_idle_offset
 
@@ -81,6 +89,48 @@ func _play(anim_name: String) -> void:
 
 func is_alive() -> bool:
 	return true # M1: nông dân chưa bị đánh (chỉ tan rã khi chủ bị loại)
+
+func is_fleeing() -> bool:
+	return _state == "flee"
+
+## Bị đánh: trừ máu (kẹp tối thiểu 1 — mốc này nông dân chưa chết, chỉ tan rã
+## khi chủ bị loại) và BỎ CHẠY về thành. Điểm móc cho mốc sau khi quân địch
+## được phép đánh nông dân.
+func take_damage(amount: float, _attacker_pid: int) -> void:
+	hp = maxf(1.0, hp - amount)
+	queue_redraw()
+	_start_flee()
+
+func _start_flee() -> void:
+	if _state == "flee":
+		_flee_left = maxf(_flee_left, float(Stats.VILLAGER_AI["flee_time"]))
+		return
+	_resume_state = _state
+	_state = "flee"
+	_flee_left = float(Stats.VILLAGER_AI["flee_time"])
+
+func _end_flee() -> void:
+	_flee_left = 0.0
+	if carrying > 0:
+		_state = "return"
+	elif _resume_state == "move_to" or _resume_state == "hold":
+		_state = _resume_state # quay lại đúng điểm người chơi đã lệnh đứng
+	elif assigned != "":
+		_state = "to_node"
+		if _node != null and is_instance_valid(_node) and _node is ResourceNode \
+				and (_node as ResourceNode).is_depleted():
+			_node = null
+	else:
+		_state = "idle"
+
+func _enemy_unit_near(range_px: float) -> bool:
+	for n in get_tree().get_nodes_in_group("units"):
+		var u := n as Unit
+		if u == null or u.owner_pid == owner_pid or not u.is_alive():
+			continue
+		if global_position.distance_to(u.global_position) <= range_px:
+			return true
+	return false
 
 func is_direct() -> bool:
 	return direct
@@ -133,6 +183,35 @@ func _process(delta: float) -> void:
 	var castle: Castle = main_ref.castles[owner_pid]
 	if castle == null:
 		return
+	# Quét nguy hiểm theo nhịp thưa (lệch pha từng nông dân): quân địch áp sát
+	# là bỏ chạy, kể cả chưa bị đánh.
+	_threat_left -= delta
+	if _threat_left <= 0.0:
+		_threat_left = float(Stats.VILLAGER_AI["threat_check_interval"]) \
+			* (0.8 + 0.1 * float(get_instance_id() % 5))
+		if _state != "flee" and _enemy_unit_near(float(Stats.VILLAGER_AI["flee_trigger_range"])):
+			_start_flee()
+	if _state == "flee":
+		_flee_left -= delta
+		var d_home := global_position.distance_to(castle.global_position)
+		# Trả hàng luôn nếu đã về tới kho (thành) trong lúc chạy.
+		if d_home <= 58.0 and carrying > 0:
+			main_ref.get_player(owner_pid).add_resource(carrying_type, carrying)
+			carrying = 0
+			carrying_type = ""
+		var safe := d_home <= float(Stats.VILLAGER_AI["flee_safe_distance"])
+		if (_flee_left <= 0.0 and safe) or _flee_left <= -float(Stats.VILLAGER_AI["flee_max_time"]):
+			_end_flee()
+		elif d_home > 34.0:
+			var anim := "run"
+			if carrying_type == "wood":
+				anim = "run_wood"
+			elif carrying_type == "gold" or carrying_type == "stone":
+				anim = "run_gold"
+			_move_toward(castle.global_position, delta, anim)
+		else:
+			_play("idle")
+		return
 	match _state:
 		"idle":
 			if assigned != "" and carrying == 0:
@@ -160,6 +239,20 @@ func _process(delta: float) -> void:
 			else:
 				if direct and _node == null and direct_node != null and is_instance_valid(direct_node):
 					_node = direct_node
+				# Điểm đã CẠN (cây thành gốc, mỏ sập...) thì coi như điểm đã mất:
+				# direct -> hết lệnh về phân bổ; phân bổ -> bỏ điểm, tìm điểm khác.
+				if _node != null and is_instance_valid(_node) and _node is ResourceNode \
+						and (_node as ResourceNode).is_depleted():
+					if direct:
+						direct = false
+						direct_node = null
+						direct_res = ""
+						assigned = ""
+						_state = "idle"
+						if main_ref != null:
+							main_ref.rebalance_player(owner_pid)
+						return
+					_node = null
 				if _node == null or not is_instance_valid(_node):
 					if direct:
 						# Mỏ trực tiếp biến mất -> hết lệnh, quay lại phân bổ.
@@ -189,9 +282,27 @@ func _process(delta: float) -> void:
 			_play("axe" if assigned == "wood" else "pick")
 			_harvest_left -= delta
 			if _harvest_left <= 0.0:
-				carrying = int(st["carry_capacity"])
-				carrying_type = assigned
-				_state = "return"
+				# MỐI NỐI TÍCH HỢP (giai đoạn 2): trừ trữ lượng thật của điểm qua
+				# API take(); điểm cạn ngay trước mặt -> bỏ điểm, tìm điểm khác.
+				var got := int(st["carry_capacity"])
+				if _node != null and is_instance_valid(_node) and _node is ResourceNode:
+					got = (_node as ResourceNode).take(got)
+				if got <= 0:
+					_node = null
+					if direct:
+						direct = false
+						direct_node = null
+						direct_res = ""
+						assigned = ""
+						_state = "idle"
+						if main_ref != null:
+							main_ref.rebalance_player(owner_pid)
+					else:
+						_state = "to_node" if assigned != "" else "idle"
+				else:
+					carrying = got
+					carrying_type = assigned
+					_state = "return"
 		"return":
 			if global_position.distance_to(castle.global_position) <= 58.0:
 				if carrying > 0:
@@ -228,3 +339,10 @@ func _face(to: Vector2) -> void:
 func _draw() -> void:
 	if selected:
 		draw_arc(Vector2.ZERO, 30.0, 0.0, TAU, 32, Color(0.3, 1, 0.4, 0.95), 3.0)
+	# Thanh máu nhỏ — chỉ hiện khi đã mất máu (bị đánh).
+	if max_hp > 0.0 and hp < max_hp:
+		var w := 30.0
+		var pos := Vector2(-w / 2.0, -52.0)
+		draw_rect(Rect2(pos, Vector2(w, 4)), Color(0, 0, 0, 0.65))
+		var frac := clampf(hp / max_hp, 0.0, 1.0)
+		draw_rect(Rect2(pos, Vector2(w * frac, 4)), Color(0.3, 0.95, 0.35))
