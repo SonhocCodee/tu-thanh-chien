@@ -16,6 +16,13 @@ var destroyed: bool = false
 var main_ref: Node = null
 var producer_kind: String = "" # "" = không sản xuất | "castle" | "barracks"
 
+# --- Sổ chứa tài nguyên (kho chuyên dụng + thành chính) ---
+# Lượng chứa trong TỪNG công trình là số thật; tổng tài nguyên của phe
+# (PlayerState.resources) luôn = thành chính + tổng các kho. Mọi cộng/trừ
+# đi qua các điểm tập trung ở Main: deposit_to / spend_resources / cướp kho.
+var stored: Dictionary = {"wood": 0, "stone": 0, "gold": 0, "meat": 0}
+var last_attacker_pid: int = -1 # pid của kẻ gây đòn gần nhất (để tính cướp kho)
+
 var train_queue: Array = [] # [{unit_type, time_left, total}]
 
 # Snapshot hiển thị cho sương mù phía người chơi (chỉ cập nhật khi ô đang SÁNG với người chơi)
@@ -30,6 +37,41 @@ var fire_offset: Vector2 = Vector2(0, -60)
 
 func is_alive() -> bool:
 	return not destroyed
+
+# --- API kho chứa (lớp con ghi đè) ---
+## Công trình này có phải KHO không (thành chính + 4 kho chuyên dụng).
+func is_storage() -> bool:
+	return false
+
+## Loại tài nguyên kho chứa: "" = nhận MỌI loại (thành chính);
+## kho chuyên dụng trả đúng khoá loại của nó ("wood"/"stone"/"gold"/"meat").
+func storage_res() -> String:
+	return ""
+
+## Sức chứa tối đa cho loại của kho; -1 = không giới hạn (thành chính).
+func storage_capacity() -> int:
+	return -1
+
+func stored_amount(res_key: String) -> int:
+	return int(stored.get(res_key, 0))
+
+## Kho này có NHẬN loại res_key không (đúng loại + còn đứng/đã xây xong).
+func accepts_res(res_key: String) -> bool:
+	if not is_storage() or not is_alive():
+		return false
+	return storage_res() == "" or storage_res() == res_key
+
+## Chỗ trống còn nhận được cho res_key (0 = không nhận/đã đầy).
+func free_space(res_key: String) -> int:
+	if not accepts_res(res_key):
+		return 0
+	var cap := storage_capacity()
+	if cap < 0:
+		return 1 << 30
+	return maxi(0, cap - stored_amount(res_key))
+
+func can_accept(res_key: String) -> bool:
+	return free_space(res_key) > 0
 
 func get_aim_point() -> Vector2:
 	return global_position + Vector2(0, -30)
@@ -46,6 +88,7 @@ func is_burning_live() -> bool:
 func take_damage(amount: float, _attacker_pid: int) -> void:
 	if destroyed:
 		return
+	last_attacker_pid = _attacker_pid
 	hp -= amount
 	queue_redraw()
 	if hp <= 0.0:

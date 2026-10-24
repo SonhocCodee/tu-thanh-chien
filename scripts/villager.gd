@@ -3,7 +3,8 @@ extends Node2D
 
 ## Nông dân (Pawn): theo phân bổ của chủ, tự chạy tới điểm tài nguyên GẦN NHẤT
 ## thuộc loại được phân VÀ đã được phe mình khám phá; khai thác (có hoạt ảnh +
-## thời gian), chất đầy tải thì VÁC VỀ KHO (thành chính hoặc Nhà Kho gần nhất),
+## thời gian), chất đầy tải thì VÁC VỀ KHO: điểm giao GẦN NHẤT *cho đúng loại
+## đang vác* (kho chuyên dụng đúng loại còn chỗ, hoặc thành chính — kho tổng),
 ## TỚI KHO MỚI ĐƯỢC CỘNG tài nguyên, lặp lại.
 ## M2 giai đoạn 2: tài nguyên HỮU HẠN (khai thác trừ trữ lượng của điểm);
 ## phân bổ "meat" = đi SĂN CỪU (dao) / xẻ xác thịt. Hết phân bổ -> chờ gần
@@ -39,7 +40,7 @@ var holding: bool = false
 var _state: String = "idle" # idle | to_node | to_sheep | hunt | harvest | return | move_to | hold | flee
 var _node: Node2D = null
 var _sheep: Sheep = null
-var _dropoff: Node2D = null # kho đang hướng về (thành chính / Nhà Kho) — test đọc được
+var _dropoff: Node2D = null # kho đang hướng về (thành chính / kho chuyên dụng) — test đọc được
 var _harvest_left: float = 0.0
 var _hit_left: float = 0.3 # đếm ngược tới nhát vung trúng kế (rung cây)
 var _anim: AnimatedSprite2D
@@ -311,18 +312,24 @@ func _process(delta: float) -> void:
 
 func _step_flee(delta: float, castle: Castle) -> void:
 	_flee_left -= delta
-	# Đích chạy = KHO GẦN NHẤT (thành chính / Nhà Kho) — cùng luật nộp hàng.
-	if _dropoff == null or not is_instance_valid(_dropoff) or (_dropoff is Building and not (_dropoff as Building).is_valid_dropoff()):
-		_dropoff = main_ref.nearest_dropoff(owner_pid, global_position)
+	# Đích chạy = điểm giao gần nhất CHO LOẠI ĐANG VÁC (kho chuyên dụng đúng
+	# loại còn chỗ, hoặc thành chính) — cùng luật nộp hàng của _step_return.
+	if not _dropoff_valid():
+		_dropoff = main_ref.nearest_dropoff(owner_pid, global_position, carrying_type)
 	if _dropoff == null:
 		_dropoff = castle
 	var d_home := global_position.distance_to(_dropoff.global_position)
 	var reach := 58.0 if _dropoff is Castle else 52.0
-	# Về TỚI kho trong lúc chạy: nộp luôn hàng đang vác (chỉ cộng khi tới kho).
+	# Về TỚI kho trong lúc chạy: nộp luôn hàng đang vác vào đúng kho đó
+	# (chỉ cộng khi tới kho; kho đầy giữa chừng thì giữ phần còn lại).
 	if d_home <= reach and carrying > 0:
-		main_ref.get_player(owner_pid).add_resource(carrying_type, carrying)
-		carrying = 0
-		carrying_type = ""
+		var put: int = main_ref.deposit_to(_dropoff as Structure, carrying_type, carrying)
+		carrying -= put
+		if carrying <= 0:
+			carrying = 0
+			carrying_type = ""
+		else:
+			_dropoff = null
 	var safe := d_home <= float(Stats.VILLAGER_AI["flee_safe_distance"])
 	if (_flee_left <= 0.0 and safe) or _flee_left <= -float(Stats.VILLAGER_AI["flee_max_time"]):
 		_end_flee()
@@ -441,23 +448,42 @@ func _step_harvest(delta: float) -> void:
 			_node = null
 			_state = "to_node"
 
+## Kho đang nhắm tới còn hợp lệ cho ĐÚNG LOẠI đang vác không:
+## thành còn đứng, hoặc kho chuyên dụng đúng loại + còn chỗ trống.
+func _dropoff_valid() -> bool:
+	if _dropoff == null or not is_instance_valid(_dropoff):
+		return false
+	if _dropoff is Castle:
+		return (_dropoff as Castle).is_alive()
+	if _dropoff is Building:
+		return (_dropoff as Building).can_accept(carrying_type)
+	return false
+
 func _step_return(delta: float, castle: Castle) -> void:
-	# Kho đích = thành chính hoặc Nhà Kho (đã xây xong, còn đứng) GẦN NHẤT.
-	# Kho bị phá giữa đường -> tính lại kho khác.
-	if _dropoff == null or not is_instance_valid(_dropoff) or (_dropoff is Building and not (_dropoff as Building).is_valid_dropoff()):
-		_dropoff = main_ref.nearest_dropoff(owner_pid, global_position)
+	# Kho đích = điểm giao gần nhất CHO LOẠI ĐANG VÁC: kho chuyên dụng đúng
+	# loại còn chỗ, hoặc thành chính (kho tổng, luôn nhận). Kho bị phá/đầy
+	# giữa đường -> tính lại điểm khác, không bao giờ đứng kẹt.
+	if carrying <= 0:
+		_state = "to_node" if assigned != "" else "idle"
+		return
+	if not _dropoff_valid():
+		_dropoff = main_ref.nearest_dropoff(owner_pid, global_position, carrying_type)
 	if _dropoff == null:
 		_dropoff = castle
 	var reach := 58.0 if _dropoff is Castle else 52.0
 	if global_position.distance_to(_dropoff.global_position) <= reach:
-		# CHỈ khi về TỚI KHO mới cộng tài nguyên.
-		if carrying > 0:
-			main_ref.get_player(owner_pid).add_resource(carrying_type, carrying)
+		# CHỈ khi về TỚI KHO mới cộng tài nguyên (vào sổ của đúng kho đó).
+		var put: int = main_ref.deposit_to(_dropoff as Structure, carrying_type, carrying)
+		carrying -= put
+		if carrying <= 0:
 			carrying = 0
 			carrying_type = ""
-		_state = "to_node" if assigned != "" else "idle"
-		if not direct:
-			_node = null
+			_state = "to_node" if assigned != "" else "idle"
+			if not direct:
+				_node = null
+		else:
+			# Kho vừa đầy giữa chừng: còn hàng trên vai -> tìm điểm giao khác.
+			_dropoff = null
 	else:
 		_move_toward(_dropoff.global_position, delta, carry_anim())
 

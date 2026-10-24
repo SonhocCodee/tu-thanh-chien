@@ -100,8 +100,9 @@ func _decide() -> void:
 		if int(player.allocation["wood"]) != w or int(player.allocation["stone"]) != s or int(player.allocation["gold"]) != g or int(player.allocation["meat"]) != m:
 			ctrl.set_villager_allocation(w, s, g, m)
 
-	# 3) Xây dựng theo thứ tự: Nhà -> Doanh trại -> Tháp -> Nhà Kho ->
-	# Nhà Lính -> Nhà 2. NGOẠI LỆ ƯU TIÊN: đang kẹt GIỚI HẠN QUÂN mà chưa
+	# 3) Xây dựng theo thứ tự: Nhà -> Doanh trại -> Tháp -> 4 kho chuyên
+	# dụng (Gỗ -> Vàng -> Đá -> Thịt, ô [6]-[9]) -> Nhà Lính -> Nhà 2.
+	# NGOẠI LỆ ƯU TIÊN: đang kẹt GIỚI HẠN QUÂN mà chưa
 	# có Nhà Lính và còn đủ tài nguyên -> xây Nhà Lính ngay để mở cap.
 	var counts := counts0
 	var slots: Array = game.build_slots(player.pid)
@@ -117,8 +118,14 @@ func _decide() -> void:
 		# tháp, xây nhà khác trước (Nhà Kho / Nhà Lính / Nhà 2 để nới dân
 		# số) thay vì kẹt mãi ở bước này. Luật chặn thật vẫn ở Main.can_place.
 		ctrl.place_building("tower", slots[2])
-	elif int(counts.get("storehouse", 0)) == 0:
-		ctrl.place_building("storehouse", slots[4])
+	elif int(counts.get("store_wood", 0)) == 0:
+		ctrl.place_building("store_wood", slots[6])
+	elif int(counts.get("store_gold", 0)) == 0:
+		ctrl.place_building("store_gold", slots[7])
+	elif int(counts.get("store_stone", 0)) == 0:
+		ctrl.place_building("store_stone", slots[8])
+	elif int(counts.get("store_meat", 0)) == 0:
+		ctrl.place_building("store_meat", slots[9])
 	elif int(counts.get("soldier_house", 0)) == 0:
 		ctrl.place_building("soldier_house", slots[5])
 	elif int(counts.get("house", 0)) < 2:

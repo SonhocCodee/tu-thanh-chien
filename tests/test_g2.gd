@@ -6,9 +6,10 @@ extends SceneTree
 ##        GoldMine_Destroyed một lúc rồi biến mất
 ##   g2c) săn cừu -> xác thịt -> thịt CHỈ cộng sau khi vác về TỚI KHO
 ##   g2d) phá nhà địch KHÔNG cho vàng
-##   g2e) bot hoàn thành trận trên hệ mới + có bot xây Nhà Kho + bot săn thịt
-##        (đẻ thêm nông dân bằng thịt)
-##   g2f) Nhà Kho được chọn làm điểm giao khi gần bãi farm hơn thành chính
+##   g2e) bot hoàn thành trận trên hệ mới + có bot xây kho chuyên dụng + bot
+##        săn thịt (đẻ thêm nông dân bằng thịt)
+##   g2f) KHO VÀNG được chọn làm điểm giao VÀNG khi gần bãi farm hơn thành
+##        chính; kho vàng KHÔNG nhận gỗ (điểm giao gỗ vẫn là thành chính)
 ## Chạy: godot --headless --script tests/test_g2.gd
 
 var _failures: Array[String] = []
@@ -115,6 +116,7 @@ func _run() -> void:
 	await _wait(0.5)
 	p0 = g.get_player(0)
 	p0.resources["meat"] = 0
+	g.castles[0].stored["meat"] = 0 # sân khấu: dọn cả sổ thịt trong thành cho khớp tổng
 	castle_pos = g.castles[0].global_position
 	var sheep: Sheep = null
 	var best_sd := 1e9
@@ -170,7 +172,7 @@ func _run() -> void:
 	g.queue_free()
 	await _wait(0.3)
 
-	# ================= g2f) Nhà Kho là điểm giao gần nhất =================
+	# ============ g2f) Kho Vàng là điểm giao VÀNG gần nhất, không nhận gỗ ====
 	g = await _new_game(false)
 	await _wait(0.5)
 	p0 = g.get_player(0)
@@ -178,20 +180,22 @@ func _run() -> void:
 	p0.resources["wood"] = 1000
 	var gold_node := _find_node(g, "gold", false, castle_pos)
 	var store_pos: Vector2 = castle_pos + Vector2(185, -140) # >=48px từ mọi node/cừu, trong vùng đã khám phá, gần mỏ vàng hơn thành
-	var placed_store: bool = g.exec_place_building(p0, "storehouse", store_pos)
+	var placed_store: bool = g.exec_place_building(p0, "store_gold", store_pos)
 	var store: Building = null
 	for n in get_nodes_in_group("buildings"):
 		var b := n as Building
-		if b.owner_pid == 0 and b.building_type == "storehouse":
+		if b.owner_pid == 0 and b.building_type == "store_gold":
 			store = b
 	if store != null:
 		store.constructed = true # sân khấu: coi như xây xong ngay
-	var drop_at_gold: Node2D = g.nearest_dropoff(0, gold_node.global_position)
-	var drop_at_castle: Node2D = g.nearest_dropoff(0, castle_pos + Vector2(30, 30))
-	_check("g2f", placed_store and store != null and drop_at_gold == store and drop_at_castle == g.castles[0],
-		"đặt Nhà Kho=%s; điểm giao tại mỏ vàng=%s (phải là Nhà Kho), tại sát thành=%s (phải là thành chính)" % [
+	var drop_at_gold: Node2D = g.nearest_dropoff(0, gold_node.global_position, "gold")
+	var wood_at_gold: Node2D = g.nearest_dropoff(0, gold_node.global_position, "wood")
+	var drop_at_castle: Node2D = g.nearest_dropoff(0, castle_pos + Vector2(30, 30), "gold")
+	_check("g2f", placed_store and store != null and drop_at_gold == store and wood_at_gold == g.castles[0] and drop_at_castle == g.castles[0],
+		"đặt Kho Vàng=%s; điểm giao VÀNG tại mỏ=%s (phải là Kho Vàng), điểm giao GỖ tại mỏ=%s (phải là thành — kho vàng không nhận gỗ), điểm giao tại sát thành=%s (phải là thành chính)" % [
 			str(placed_store),
-			"Nhà Kho" if drop_at_gold == store else ("thành" if drop_at_gold == g.castles[0] else "?"),
+			"Kho Vàng" if drop_at_gold == store else ("thành" if drop_at_gold == g.castles[0] else "?"),
+			"thành chính" if wood_at_gold == g.castles[0] else "?",
 			"thành chính" if drop_at_castle == g.castles[0] else "?"])
 	g.queue_free()
 	await _wait(0.3)
@@ -208,13 +212,13 @@ func _run() -> void:
 		t += 2.0 # _wait đã theo giờ game (xem _sim_until)
 		for n in get_nodes_in_group("buildings"):
 			var b := n as Building
-			if b.owner_pid != 0 and b.building_type == "storehouse":
+			if b.owner_pid != 0 and b.building_type.begins_with("store_"):
 				saw_storehouse = true
 		for pid in [1, 2, 3]:
 			if g.villager_count(pid) > 3:
 				saw_bot_villager4 = true
 	_check("g2e", g.match_over and saw_storehouse and saw_bot_villager4,
-		"mô phỏng %.0fs game: match_over=%s, có bot xây Nhà Kho=%s, có bot đẻ nông dân thứ 4 (tốn thịt)=%s" % [
+		"mô phỏng %.0fs game: match_over=%s, có bot xây kho chuyên dụng=%s, có bot đẻ nông dân thứ 4 (tốn thịt)=%s" % [
 			t, str(g.match_over), str(saw_storehouse), str(saw_bot_villager4)])
 	g.queue_free()
 
