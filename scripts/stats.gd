@@ -342,6 +342,36 @@ const FOG := {
 	},
 }
 
+# --- CHỢ (buôn bán tài nguyên tại Thành chính) ---
+# Bán/mua theo GÓI (lot) 100 đơn vị gỗ/đá/thịt <-> vàng. Mỗi phe 1 thị
+# trường RIÊNG: 1 hệ số giá (factor) cho từng loại, khởi đầu 1.0.
+#   giá bán 1 gói = base_sell * factor  (bán 100 -> 70 vàng ở giá gốc)
+#   giá mua 1 gói = base_buy  * factor  (mua 100 <- 100 vàng ở giá gốc)
+# Chênh lệch 70/100 ở giá gốc chính là PHÍ CHỢ. Mỗi lần BÁN 1 gói: factor
+# của loại đó *= (1 - price_step) — bán dồn thì giá sụt; mỗi lần MUA 1 gói:
+# factor *= (1 + price_step) — mua dồn thì giá đội. factor kẹp trong
+# [factor_min, factor_max]: factor_min 0.25 = giá bán không bao giờ dưới
+# 25% giá gốc. Để yên không giao dịch: độ lệch của factor so với 1.0 thu
+# hẹp recover_rate (1%) mỗi recover_interval (5s) — hồi GIẢM DẦN theo cấp
+# số nhân, không nhảy cóc về gốc.
+const MARKET := {
+	"lot": 100,
+	"base_sell": 70,
+	"base_buy": 100,
+	"price_step": 0.08,
+	"factor_min": 0.25,
+	"factor_max": 3.0,
+	"recover_rate": 0.01,
+	"recover_interval": 5.0,
+	"tradables": ["wood", "stone", "meat"],
+	# Bot dùng chợ (mức cơ bản): vàng dưới bot_gold_floor (không đủ luyện
+	# 1 kiếm sĩ) mà có loại khác dư trên bot_surplus thì bán 1 gói lấy vàng;
+	# bot_cooldown = nhịp chờ tối thiểu giữa 2 lần bán để không xả hàng.
+	"bot_gold_floor": 80,
+	"bot_surplus": 250,
+	"bot_cooldown": 20.0,
+}
+
 # --- Bot ---
 const BOT := {
 	"decision_interval": 1.2,

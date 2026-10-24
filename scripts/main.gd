@@ -147,6 +147,9 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	if not match_over:
 		elapsed += delta
+		# Giá chợ của mọi phe hồi dần về giá gốc theo thời gian.
+		for p in players:
+			(p as PlayerState).tick_market(delta)
 	_fog_timer -= delta
 	if _fog_timer <= 0.0:
 		_fog_timer = float(Stats.FOG["update_interval"])
@@ -479,6 +482,125 @@ func grant_resource(pid: int, res_key: String, amount: int) -> void:
 	if castle != null:
 		castle.stored[res_key] = castle.stored_amount(res_key) + amount
 	players[pid].add_resource(res_key, amount)
+
+# ===================== CHỢ (buôn bán tại Thành chính) =====================
+# Bán/mua theo GÓI lot=100 đơn vị gỗ/đá/thịt <-> vàng, giá trôi theo cung
+# cầu TỪNG PHE (PlayerState.market_factor — xem Stats.MARKET). Chợ là việc
+# NỘI BỘ của 1 phe: không đọc, không lộ thông tin của phe khác.
+# Sổ sách đi qua ĐÚNG 2 đường tập trung sẵn có: trừ bằng spend_resources
+# (thành trước, kho sau), cộng bằng deposit_to (thành trước, kho chuyên
+# dụng đúng loại sau) — bất biến resources == thành + Σ kho giữ nguyên.
+
+func market_tradable(res_key: String) -> bool:
+	return Stats.MARKET["tradables"].has(res_key)
+
+func market_factor(pid: int, res_key: String) -> float:
+	var p := get_player(pid)
+	if p == null:
+		return 1.0
+	return float(p.market_factor.get(res_key, 1.0))
+
+## Vàng nhận được khi BÁN 1 gói res_key ở giá hiện tại của phe.
+func market_sell_price(pid: int, res_key: String) -> int:
+	return maxi(1, int(round(float(Stats.MARKET["base_sell"]) * market_factor(pid, res_key))))
+
+## Vàng phải trả khi MUA 1 gói res_key ở giá hiện tại của phe.
+func market_buy_price(pid: int, res_key: String) -> int:
+	return maxi(1, int(round(float(Stats.MARKET["base_buy"]) * market_factor(pid, res_key))))
+
+## Bảng giá hiện tại của 1 phe cho HUD: {loại: {sell, buy, factor}}.
+func market_price_table(pid: int) -> Dictionary:
+	var out := {}
+	for k in Stats.MARKET["tradables"]:
+		var key := str(k)
+		out[key] = {
+			"sell": market_sell_price(pid, key),
+			"buy": market_buy_price(pid, key),
+			"factor": market_factor(pid, key),
+		}
+	return out
+
+## Tổng chỗ trống còn nhận được res_key của cả hệ kho 1 phe (thành +
+## kho chuyên dụng đúng loại). Thành còn đứng = không giới hạn thực tế;
+## chỉ khi thành đã sập mà kho cũng đầy thì giao dịch nhận hàng mới kẹt.
+func storage_free_space(pid: int, res_key: String) -> int:
+	var total := 0
+	var castle := castles.get(pid) as Castle
+	if castle != null:
+		total += castle.free_space(res_key)
+	for n in get_tree().get_nodes_in_group("buildings"):
+		var b := n as Building
+		if b.owner_pid == pid and b.is_storage():
+			total += b.free_space(res_key)
+	return total
+
+## Lý do KHÔNG giao dịch được ("" = giao dịch được). HUD dùng để làm mờ
+## nút + báo lý do; exec_* dùng làm cổng chặn thật — 1 nguồn luật duy nhất.
+## Mã lý do: "invalid" | "not_enough_resource" | "not_enough_gold" |
+## "no_space_gold" | "no_space_resource".
+func market_block_reason(player: PlayerState, res_key: String, is_sell: bool) -> String:
+	if player == null or not market_tradable(res_key):
+		return "invalid"
+	var lot := int(Stats.MARKET["lot"])
+	if is_sell:
+		if int(player.resources.get(res_key, 0)) < lot:
+			return "not_enough_resource"
+		if storage_free_space(player.pid, "gold") < market_sell_price(player.pid, res_key):
+			return "no_space_gold"
+	else:
+		if int(player.resources.get("gold", 0)) < market_buy_price(player.pid, res_key):
+			return "not_enough_gold"
+		if storage_free_space(player.pid, res_key) < lot:
+			return "no_space_resource"
+	return ""
+
+## Cộng amount của res_key vào sổ phe qua deposit_to: THÀNH CHÍNH trước,
+## còn dư mới tới kho chuyên dụng đúng loại. Trả số thực cộng được.
+func _market_receive(pid: int, res_key: String, amount: int) -> int:
+	var left := amount
+	var castle := castles.get(pid) as Castle
+	if castle != null and left > 0:
+		left -= deposit_to(castle, res_key, left)
+	if left > 0:
+		for n in get_tree().get_nodes_in_group("buildings"):
+			var b := n as Building
+			if b.owner_pid == pid and b.is_storage() and b.storage_res() == res_key:
+				left -= deposit_to(b, res_key, left)
+				if left <= 0:
+					break
+	return amount - left
+
+## Sau 1 giao dịch thành công: trôi factor của loại đó (bán -> giảm,
+## mua -> tăng) và kẹp trong [factor_min, factor_max].
+func _apply_market_trade(player: PlayerState, res_key: String, is_buy: bool) -> void:
+	var step := float(Stats.MARKET["price_step"])
+	var f := float(player.market_factor.get(res_key, 1.0))
+	f = f * (1.0 + step) if is_buy else f * (1.0 - step)
+	player.market_factor[res_key] = clampf(f,
+		float(Stats.MARKET["factor_min"]), float(Stats.MARKET["factor_max"]))
+	player.market_trades_total += 1
+
+## BÁN 1 gói res_key lấy vàng theo giá HIỆN TẠI (giá chốt trước khi trôi).
+func exec_market_sell(player: PlayerState, res_key: String) -> bool:
+	if market_block_reason(player, res_key, true) != "":
+		return false
+	var gain := market_sell_price(player.pid, res_key)
+	if not spend_resources(player, {res_key: int(Stats.MARKET["lot"])}):
+		return false
+	_market_receive(player.pid, "gold", gain)
+	_apply_market_trade(player, res_key, false)
+	return true
+
+## MUA 1 gói res_key bằng vàng theo giá HIỆN TẠI (giá chốt trước khi trôi).
+func exec_market_buy(player: PlayerState, res_key: String) -> bool:
+	if market_block_reason(player, res_key, false) != "":
+		return false
+	var price := market_buy_price(player.pid, res_key)
+	if not spend_resources(player, {"gold": price}):
+		return false
+	_market_receive(player.pid, res_key, int(Stats.MARKET["lot"]))
+	_apply_market_trade(player, res_key, true)
+	return true
 
 func _build_castles() -> void:
 	for pid in CASTLE_POS.keys():
