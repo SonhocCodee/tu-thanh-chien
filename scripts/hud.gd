@@ -36,8 +36,8 @@ func _ready() -> void:
 	add_child(top)
 	_res_label = _mk_label(top, Vector2(12, 8), 18)
 	_pop_label = _mk_label(top, Vector2(360, 8), 18)
-	_clock_label = _mk_label(top, Vector2(560, 8), 18)
-	_stance_label = _mk_label(top, Vector2(680, 8), 18)
+	_clock_label = _mk_label(top, Vector2(520, 8), 18)
+	_stance_label = _mk_label(top, Vector2(700, 8), 18)
 	_msg_label = _mk_label(top, Vector2(12, 40), 16)
 	_msg_label.add_theme_color_override("font_color", Color(1, 0.9, 0.4))
 	_msg_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
@@ -89,14 +89,16 @@ func _ready() -> void:
 	_mk_title(bottom, Vector2(648, 4), "Huấn luyện")
 	var row1 := _mk_label(bottom, Vector2(648, 26), 13)
 	row1.text = "Thành chính:"
-	_train_castle_buttons["pawn"] = _mk_button(bottom, Vector2(730, 22), Vector2(86, 24), "Nông dân")
-	_train_castle_buttons["warrior"] = _mk_button(bottom, Vector2(820, 22), Vector2(86, 24), "Kiếm sĩ")
-	_castle_queue_label = _mk_label(bottom, Vector2(912, 26), 12)
+	_train_castle_buttons["pawn"] = _mk_button(bottom, Vector2(742, 22), Vector2(88, 24), "Nông dân")
+	_train_castle_buttons["warrior"] = _mk_button(bottom, Vector2(834, 22), Vector2(88, 24), "Kiếm sĩ")
+	_castle_queue_label = _mk_label(bottom, Vector2(928, 26), 12)
 	var row2 := _mk_label(bottom, Vector2(648, 58), 13)
 	row2.text = "Doanh trại:"
-	_train_barracks_buttons["warrior"] = _mk_button(bottom, Vector2(730, 54), Vector2(86, 24), "Kiếm sĩ")
-	_train_barracks_buttons["archer"] = _mk_button(bottom, Vector2(820, 54), Vector2(86, 24), "Cung thủ")
-	_barracks_queue_label = _mk_label(bottom, Vector2(912, 58), 12)
+	_train_barracks_buttons["warrior"] = _mk_button(bottom, Vector2(742, 54), Vector2(88, 24), "Kiếm sĩ")
+	_train_barracks_buttons["archer"] = _mk_button(bottom, Vector2(834, 54), Vector2(88, 24), "Cung thủ")
+	_barracks_queue_label = _mk_label(bottom, Vector2(928, 58), 12)
+	var cost_hint := _mk_label(bottom, Vector2(648, 86), 11)
+	cost_hint.text = "Giá: Nông dân 50 vàng • Kiếm sĩ 80 vàng • Cung thủ 70 vàng + 30 gỗ"
 	(_train_castle_buttons["pawn"] as Button).pressed.connect(func() -> void: ctrl.queue_training(game.castles[0], "pawn"))
 	(_train_castle_buttons["warrior"] as Button).pressed.connect(func() -> void: ctrl.queue_training(game.castles[0], "warrior"))
 	(_train_barracks_buttons["warrior"] as Button).pressed.connect(func() -> void: ctrl.queue_training(game.active_barracks(0), "warrior"))
@@ -179,17 +181,15 @@ func _process(delta: float) -> void:
 	for btype in _build_buttons.keys():
 		(_build_buttons[btype] as Button).disabled = not p.can_afford(Stats.BUILDINGS[btype]["cost"])
 	var castle: Castle = game.castles[0]
-	_castle_queue_label.text = "hàng chờ: %d" % castle.queue_count()
+	_castle_queue_label.text = "chờ: %d" % castle.queue_count()
 	for utype in _train_castle_buttons.keys():
 		var btn := _train_castle_buttons[utype] as Button
 		btn.disabled = not _can_train(castle, utype)
-		btn.text = "%s (%s)" % [Stats.UNITS[utype]["label"], Stats.cost_text(Stats.TRAINING[utype]["cost"])]
 	var barracks: Building = game.active_barracks(0)
-	_barracks_queue_label.text = "chưa có doanh trại" if barracks == null else "hàng chờ: %d" % barracks.queue_count()
+	_barracks_queue_label.text = "chưa có" if barracks == null else "chờ: %d" % barracks.queue_count()
 	for utype in _train_barracks_buttons.keys():
 		var btn2 := _train_barracks_buttons[utype] as Button
 		btn2.disabled = barracks == null or not _can_train(barracks, utype)
-		btn2.text = "%s (%s)" % [Stats.UNITS[utype]["label"], Stats.cost_text(Stats.TRAINING[utype]["cost"])]
 
 func _can_train(producer: Structure, unit_type: String) -> bool:
 	var p := ctrl.player
