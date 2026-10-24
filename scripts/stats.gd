@@ -99,6 +99,7 @@ const BUILDINGS := {
 		"build_time": 12.0,
 		"hp": 250.0,
 		"radius": 42.0,
+		"size": "small",
 	},
 	"barracks": {
 		"label": "Doanh trại",
@@ -106,6 +107,7 @@ const BUILDINGS := {
 		"build_time": 20.0,
 		"hp": 400.0,
 		"radius": 55.0,
+		"size": "large",
 	},
 	"tower": {
 		"label": "Tháp canh",
@@ -113,6 +115,7 @@ const BUILDINGS := {
 		"build_time": 15.0,
 		"hp": 300.0,
 		"radius": 34.0,
+		"size": "large",
 		"tower_range": 185.0,
 		# Tháp KHÔNG tự bắn: xây xong có 1 CUNG THỦ đứng trên đỉnh tháp và
 		# chính nó bắn — sát thương / hồi chiêu / tốc độ tên lấy theo
@@ -137,6 +140,7 @@ const BUILDINGS := {
 		"radius": 40.0,
 		"storage_res": "wood",
 		"storage_capacity": 500,
+		"size": "small",
 	},
 	"store_stone": {
 		"label": "Kho Đá",
@@ -146,6 +150,7 @@ const BUILDINGS := {
 		"radius": 40.0,
 		"storage_res": "stone",
 		"storage_capacity": 500,
+		"size": "small",
 	},
 	"store_gold": {
 		"label": "Kho Vàng",
@@ -155,6 +160,7 @@ const BUILDINGS := {
 		"radius": 40.0,
 		"storage_res": "gold",
 		"storage_capacity": 500,
+		"size": "small",
 	},
 	"store_meat": {
 		"label": "Kho Thịt",
@@ -164,6 +170,7 @@ const BUILDINGS := {
 		"radius": 40.0,
 		"storage_res": "meat",
 		"storage_capacity": 500,
+		"size": "small",
 	},
 	# Nhà Lính: KHÔNG luyện quân — chức năng duy nhất là tăng GIỚI HẠN QUÂN
 	# (army cap) thêm army_bonus ô. Army cap tách khỏi dân số chung: quân
@@ -177,8 +184,22 @@ const BUILDINGS := {
 		"hp": 300.0,
 		"radius": 42.0,
 		"army_bonus": 6,
+		"size": "large",
 	},
 }
+
+# --- Thợ xây (hệ thống xây mới): công trình chỉ tiến triển khi có nông dân
+# TỚI TẬN NƠI đóng búa. "size" trong BUILDINGS quyết định số thợ cần:
+# nhỏ = 1 thợ, lớn = 2 thợ. build_time trong BUILDINGS là thời gian khi
+# ĐỦ thợ; thiếu thợ thì chậm tỉ lệ (có mặt / cần).
+const BUILDER_COUNT := {
+	"small": 1,
+	"large": 2,
+}
+
+static func builders_required(building_type: String) -> int:
+	var size: String = str(BUILDINGS[building_type].get("size", "small"))
+	return int(BUILDER_COUNT.get(size, 1))
 
 # --- Thành chính ---
 const CASTLE := {

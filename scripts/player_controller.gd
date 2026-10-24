@@ -131,6 +131,16 @@ func order_selected_move(point: Vector2, include_villagers: bool) -> int:
 				count += 1
 	return count
 
+## Cử các nông dân đang chọn tới xây tiếp 1 công trình đang xây dở.
+func order_selected_build(building: Building) -> int:
+	if player == null or not player.alive or building == null:
+		return 0
+	var count := 0
+	for v in _selected_villagers():
+		if game.exec_villager_build(player, v, building):
+			count += 1
+	return count
+
 func order_selected_farm(node: Node2D) -> int:
 	if player == null or not player.alive:
 		return 0
