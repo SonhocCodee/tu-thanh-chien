@@ -1,0 +1,134 @@
+class_name Structure
+extends Node2D
+
+## Lớp nền cho mọi công trình (thành chính + nhà/doanh trại/tháp):
+## máu, cháy dưới 50%, sập, hàng chờ huấn luyện, và "snapshot hiển thị"
+## phục vụ sương mù (vùng MỜ của người chơi thấy trạng thái lần cuối được nhìn).
+
+signal structure_destroyed(structure: Structure)
+
+var owner_pid: int = -1
+var color_key: String = "blue"
+var hp: float = 0.0
+var max_hp: float = 0.0
+var radius: float = 40.0
+var destroyed: bool = false
+var main_ref: Node = null
+var producer_kind: String = "" # "" = không sản xuất | "castle" | "barracks"
+
+var train_queue: Array = [] # [{unit_type, time_left, total}]
+
+# Snapshot hiển thị cho sương mù phía người chơi (chỉ cập nhật khi ô đang SÁNG với người chơi)
+var use_snapshot: bool = false
+var display_hp: float = 0.0
+var display_burning: bool = false
+var display_destroyed: bool = false
+var display_constructed: bool = true
+
+var _fire: AnimatedSprite2D = null
+var fire_offset: Vector2 = Vector2(0, -60)
+
+func is_alive() -> bool:
+	return not destroyed
+
+func get_aim_point() -> Vector2:
+	return global_position + Vector2(0, -30)
+
+func disp_destroyed() -> bool:
+	return use_snapshot ? display_destroyed : destroyed
+
+func effective_hp() -> float:
+	return use_snapshot ? display_hp : hp
+
+func is_burning_live() -> bool:
+	return is_alive() and hp < max_hp * 0.5
+
+func take_damage(amount: float, _attacker_pid: int) -> void:
+	if destroyed:
+		return
+	hp -= amount
+	queue_redraw()
+	if hp <= 0.0:
+		hp = 0.0
+		destroyed = true
+		_refresh_display()
+		structure_destroyed.emit(self)
+		queue_redraw()
+
+func force_ruin() -> void:
+	# Biến thành tàn tích không phát signal (dùng khi chủ bị loại).
+	hp = 0.0
+	destroyed = true
+	train_queue.clear()
+	_refresh_display()
+	queue_redraw()
+
+func _refresh_display() -> void:
+	pass # lớp con cài đặt (đổi sprite theo trạng thái hiển thị)
+
+# --- Huấn luyện ---
+func can_produce() -> bool:
+	return is_alive() and producer_kind != ""
+
+func enqueue(unit_type: String, total_time: float) -> void:
+	train_queue.append({"unit_type": unit_type, "time_left": total_time, "total": total_time})
+
+func queue_count() -> int:
+	return train_queue.size()
+
+func _tick_production(delta: float) -> void:
+	if not can_produce() or train_queue.is_empty():
+		return
+	var item: Dictionary = train_queue[0]
+	item["time_left"] = float(item["time_left"]) - delta
+	train_queue[0] = item
+	if float(item["time_left"]) <= 0.0:
+		train_queue.remove_at(0)
+		if main_ref != null:
+			main_ref.spawn_trained_unit(owner_pid, item["unit_type"], self)
+
+# --- Lửa cháy ---
+func _make_fire() -> void:
+	_fire = AnimatedSprite2D.new()
+	var sf := SpriteFrames.new()
+	var sheet := load("res://assets/fx/fire.png") as Texture2D
+	sf.add_animation("fire")
+	sf.set_animation_speed("fire", 10.0)
+	for i in 8:
+		var at := AtlasTexture.new()
+		at.atlas = sheet
+		at.region = Rect2(i * 64, 0, 64, 64)
+		sf.add_frame("fire", at)
+	_fire.sprite_frames = sf
+	_fire.position = fire_offset
+	_fire.scale = Vector2(1.15, 1.15)
+	_fire.visible = false
+	add_child(_fire)
+	_fire.play("fire")
+
+func _update_fire() -> void:
+	if _fire == null:
+		return
+	var burning := use_snapshot ? display_burning : is_burning_live()
+	_fire.visible = burning and not disp_destroyed()
+
+# --- Tháp bắn tự vệ dùng chung ---
+var _tower_timer: float = 0.0
+
+func _tick_tower(delta: float, p_range: float, p_damage: float, p_cooldown: float, p_proj_speed: float, muzzle: Vector2) -> void:
+	_tower_timer = maxf(0.0, _tower_timer - delta)
+	if _tower_timer > 0.0 or main_ref == null:
+		return
+	var best: Node2D = null
+	var best_d := p_range
+	for n in get_tree().get_nodes_in_group("units"):
+		var u := n as Unit
+		if u == null or u.owner_pid == owner_pid or not u.is_alive():
+			continue
+		var d := global_position.distance_to(u.global_position)
+		if d < best_d:
+			best_d = d
+			best = u
+	if best != null:
+		_tower_timer = p_cooldown
+		main_ref.spawn_projectile(muzzle, best, p_damage, owner_pid, p_proj_speed, color_key)

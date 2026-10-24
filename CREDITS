@@ -1,0 +1,17 @@
+CREDITS — Tài sản đồ hoạ
+
+Game "Tứ Thành Chiến — Đế Chế 4 Phe" dùng bộ asset "Tiny Swords" của Pixel Frog
+(trang itch.io: pixelfrog-assets.itch.io), từ 2 nguồn do người dùng cung cấp:
+
+1) "Tiny Swords (Free Pack)" (bản miễn phí do Pixel Frog phát hành):
+   - Quân Warrior / Archer / Pawn đủ 4 màu (sprite + hoạt ảnh Idle/Run/Attack/Shoot/Interact/mang tài nguyên), mũi tên.
+   - Công trình theo màu: Castle, Tower, House1, Barracks.
+   - Địa hình: Tilemap_color1 (cỏ), Water Background (nước), cây, đá trang trí.
+   - Hiệu ứng: Explosion_01, Fire_01.
+
+2) "Tiny Swords (Update 010)" — bản CC0 do người dùng tự gửi file:
+   - Castle_{Blue,Red,Yellow,Purple}.png (thành theo màu), Castle_Destroyed.png.
+   - House_Destroyed.png, Tower_Destroyed.png, House_Construction.png, Tower_Construction.png.
+   - Mỏ vàng GoldMine_Active.png, mỏ đá M_Idle.png (thư mục Resources).
+
+Mọi hình ảnh trong thư mục assets/ đều chép từ 2 nguồn trên, không tự vẽ.

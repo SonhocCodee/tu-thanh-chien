@@ -1,0 +1,4 @@
+tools_bin/
+build/
+.godot/
+*.import
