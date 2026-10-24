@@ -274,6 +274,18 @@ func _build_sheep() -> void:
 			var a2 := TAU * float(i) / 3.0 + 0.5
 			_add_sheep(center + Vector2(cos(a2), sin(a2)) * 55.0, seed_val)
 			seed_val += 77
+	# NGƯỜI GIỮ ĐÀN (tích hợp AI): các bãi chăn TRUNG LẬP tự hồi cừu về trần
+	# (giữa map 6 con, hai bên 3 con = đúng số ban đầu ở trên; hồi 20s/con).
+	# Cừu quanh thành từng phe KHÔNG có keeper — săn hết là hết, như GĐ2.
+	var keeper_mid := HerdKeeper.new()
+	keeper_mid.position = Vector2(960, 480)
+	add_child(keeper_mid)
+	keeper_mid.setup()
+	for center in [Vector2(565, 480), Vector2(1355, 480)]:
+		var keeper_side := HerdKeeper.new()
+		keeper_side.position = center
+		add_child(keeper_side)
+		keeper_side.setup(180.0, 3)
 
 func _add_sheep(pos: Vector2, seed_val: int) -> Sheep:
 	var s := Sheep.new()

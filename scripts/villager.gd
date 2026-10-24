@@ -32,7 +32,7 @@ var direct_res: String = ""
 var move_point: Vector2 = Vector2.ZERO
 var holding: bool = false
 
-var _state: String = "idle" # idle | to_node | to_sheep | hunt | harvest | return | move_to | hold
+var _state: String = "idle" # idle | to_node | to_sheep | hunt | harvest | return | move_to | hold | flee
 var _node: Node2D = null
 var _sheep: Sheep = null
 var _dropoff: Node2D = null # kho đang hướng về (thành chính / Nhà Kho) — test đọc được
@@ -40,11 +40,21 @@ var _harvest_left: float = 0.0
 var _anim: AnimatedSprite2D
 var _cur_anim: String = ""
 
+# AI bỏ chạy (Stats.VILLAGER_AI, port từ nhánh AI): bị đánh trúng hoặc quân
+# địch áp sát <= flee_trigger_range -> chạy về KHO GẦN NHẤT; an toàn rồi thì
+# QUAY LẠI ĐÚNG việc cũ (phân bổ / lệnh trực tiếp / điểm đứng) — không huỷ lệnh.
+var max_hp: float = 0.0
+var _dead: bool = false
+var _flee_left: float = 0.0
+var _resume_state: String = ""
+var _threat_left: float = 0.0
+
 func setup(p_owner: int, p_color: String, p_main: Node, p_idle_offset: Vector2) -> void:
 	owner_pid = p_owner
 	color_key = p_color
 	st = Stats.unit_stats("pawn")
 	hp = st["hp"]
+	max_hp = hp
 	main_ref = p_main
 	idle_offset = p_idle_offset
 
@@ -87,10 +97,63 @@ func _play(anim_name: String) -> void:
 		_anim.play(anim_name)
 
 func is_alive() -> bool:
-	return true # M1: nông dân chưa bị đánh (chỉ tan rã khi chủ bị loại)
+	return not _dead
 
 func is_direct() -> bool:
 	return direct
+
+func is_fleeing() -> bool:
+	return _state == "flee"
+
+## Bị đánh trúng: trừ máu THẬT (không kẹp tối thiểu như bản AI — nông dân
+## chết được bình thường) và BỎ CHẠY về kho gần nhất.
+func take_damage(amount: float, _attacker_pid: int) -> void:
+	if _dead:
+		return
+	hp -= amount
+	if hp <= 0.0:
+		_dead = true
+		remove_from_group("villagers")
+		queue_free()
+		return
+	_start_flee()
+
+func _start_flee() -> void:
+	if _state == "flee":
+		_flee_left = maxf(_flee_left, float(Stats.VILLAGER_AI["flee_time"]))
+		return
+	_resume_state = _state
+	_state = "flee"
+	_flee_left = float(Stats.VILLAGER_AI["flee_time"])
+	_dropoff = null # tính lại kho đích theo vị trí lúc chạy
+
+func _end_flee() -> void:
+	_flee_left = 0.0
+	if carrying > 0:
+		_state = "return"
+	elif _resume_state == "move_to" or _resume_state == "hold":
+		_state = _resume_state # quay lại đúng điểm người chơi đã lệnh đứng
+	elif _resume_state == "to_sheep" or _resume_state == "hunt":
+		# Còn cừu để săn thì săn tiếp, mất cừu thì về luồng farm thường.
+		_state = "to_sheep" if (_sheep != null and is_instance_valid(_sheep) and _sheep.alive) else "to_node"
+	elif _resume_state == "harvest" and not _node_gone(_node):
+		_state = "harvest"
+		_harvest_left = float(st["harvest_time"])
+	elif _resume_state == "return":
+		_state = "return"
+	elif assigned != "":
+		_state = "to_node"
+	else:
+		_state = "idle"
+
+func _enemy_unit_near(range_px: float) -> bool:
+	for n in get_tree().get_nodes_in_group("units"):
+		var u := n as Unit
+		if u == null or u.owner_pid == owner_pid or not u.is_alive():
+			continue
+		if global_position.distance_to(u.global_position) <= range_px:
+			return true
+	return false
 
 func carry_anim() -> String:
 	# Đang vác gì thì hiện đúng hoạt ảnh vác loại đó.
@@ -198,6 +261,17 @@ func _process(delta: float) -> void:
 	var castle: Castle = main_ref.castles[owner_pid]
 	if castle == null:
 		return
+	# Quét nguy hiểm theo nhịp thưa (lệch pha từng nông dân): quân địch áp
+	# sát là bỏ chạy, kể cả chưa bị đánh.
+	_threat_left -= delta
+	if _threat_left <= 0.0:
+		_threat_left = float(Stats.VILLAGER_AI["threat_check_interval"]) \
+			* (0.8 + 0.1 * float(abs(get_instance_id()) % 5))
+		if _state != "flee" and _enemy_unit_near(float(Stats.VILLAGER_AI["flee_trigger_range"])):
+			_start_flee()
+	if _state == "flee":
+		_step_flee(delta, castle)
+		return
 	match _state:
 		"idle":
 			if assigned != "" and carrying == 0:
@@ -229,6 +303,28 @@ func _process(delta: float) -> void:
 			_step_harvest(delta)
 		"return":
 			_step_return(delta, castle)
+
+func _step_flee(delta: float, castle: Castle) -> void:
+	_flee_left -= delta
+	# Đích chạy = KHO GẦN NHẤT (thành chính / Nhà Kho) — cùng luật nộp hàng.
+	if _dropoff == null or not is_instance_valid(_dropoff) or (_dropoff is Building and not (_dropoff as Building).is_valid_dropoff()):
+		_dropoff = main_ref.nearest_dropoff(owner_pid, global_position)
+	if _dropoff == null:
+		_dropoff = castle
+	var d_home := global_position.distance_to(_dropoff.global_position)
+	var reach := 58.0 if _dropoff is Castle else 52.0
+	# Về TỚI kho trong lúc chạy: nộp luôn hàng đang vác (chỉ cộng khi tới kho).
+	if d_home <= reach and carrying > 0:
+		main_ref.get_player(owner_pid).add_resource(carrying_type, carrying)
+		carrying = 0
+		carrying_type = ""
+	var safe := d_home <= float(Stats.VILLAGER_AI["flee_safe_distance"])
+	if (_flee_left <= 0.0 and safe) or _flee_left <= -float(Stats.VILLAGER_AI["flee_max_time"]):
+		_end_flee()
+	elif d_home > 30.0:
+		_move_toward(_dropoff.global_position, delta, carry_anim())
+	else:
+		_play("idle")
 
 func _step_to_node(delta: float, castle: Castle) -> void:
 	if assigned == "":

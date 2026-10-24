@@ -118,10 +118,12 @@ const ECONOMY := {
 # --- Tài nguyên HỮU HẠN (M2 giai đoạn 2): trữ lượng từng điểm trên map ---
 # Đơn vị = đúng đơn vị tài nguyên; mỗi chuyến nông dân vác tối đa
 # UNITS.pawn.carry_capacity (10). Cạn -> cây đổ còn gốc, mỏ biến mất.
+# regen_time (tích hợp AI 2026-10-24, user chốt): giây để điểm CẠN hồi lại
+# đầy; 0 = KHÔNG hồi. CÂY mọc lại từ gốc sau 90s; ĐÁ/VÀNG không hồi.
 const NODE_AMOUNTS := {
-	"wood": {"small": 300, "big": 900},
-	"stone": {"small": 240, "big": 720},
-	"gold": {"small": 300, "big": 1000},
+	"wood": {"small": 300, "big": 900, "regen_time": 90.0},
+	"stone": {"small": 240, "big": 720, "regen_time": 0.0},
+	"gold": {"small": 300, "big": 1000, "regen_time": 0.0},
 }
 
 # --- Cừu trung lập: nguồn thịt ---
@@ -130,6 +132,55 @@ const SHEEP := {
 	"meat": 100, # thịt trong 1 xác cừu
 	"speed": 22.0,
 	"wander_radius": 85.0,
+}
+
+# --- AI quân lính (unit.gd): chọn mục tiêu / tách đàn / leash / cung thủ giữ tầm ---
+# Điểm chọn mục tiêu (thấp = ưu tiên): score = khoảng cách * 1.0
+#   + target_hp_bias * (máu địch / máu tối đa)   -> địch yếu máu bị "kết liễu" trước
+#   + target_type_bias[loại địch]               -> âm = ưu tiên đánh trước
+#   - target_stickiness nếu là mục tiêu hiện tại -> tránh nhảy mục tiêu liên tục.
+const UNIT_AI := {
+	"think_interval": 0.18, # nhịp tái chọn mục tiêu (giây), lệch pha theo từng quân
+	"target_hp_bias": 150.0, # địch đầy máu +150 điểm ~ tương đương 150px xa hơn
+	"target_type_bias": {"warrior": 0.0, "archer": -40.0}, # cung thủ: nguy hiểm + máu mỏng -> diệt trước
+	"target_stickiness": 30.0,
+	"leash_hold": 400.0, # giữ nhà: không đuổi địch quá bán kính này tính từ THÀNH
+	"leash_move": 300.0, # đi trinh sát: không đuổi quá bán kính này tính từ ĐIỂM ĐƯỢC LỆNH
+	"separation_radius": 30.0, # khoảng cách cá nhân tối thiểu giữa quân/nông dân
+	"separation_push": 85.0, # tốc độ đẩy tách tối đa (px/s, khi chồng khít)
+	"separation_interval": 0.1, # nhịp tính lại lực tách (giây), lệch pha từng quân
+	"archer_kite_distance": 84.0, # địch áp sát gần hơn mức này -> cung thủ vừa bắn vừa lùi giữ tầm
+}
+
+# --- AI nông dân (villager.gd): bỏ chạy khi nguy hiểm ---
+const VILLAGER_AI := {
+	"flee_time": 2.5, # thời gian hoảng tối thiểu mỗi lần bỏ chạy (giây)
+	"flee_trigger_range": 56.0, # quân địch áp sát trong bán kính này -> bỏ chạy (kể cả chưa bị đánh)
+	"flee_safe_distance": 84.0, # về tới gần kho chừng này thì coi như an toàn
+	"flee_max_time": 6.0, # quá hạn chót này thì quay lại việc dù chưa về tới kho
+	"threat_check_interval": 0.15, # nhịp quét nguy hiểm (giây), lệch pha từng nông dân
+}
+
+# --- Thú trung lập: cừu (animal_ai.gd / sheep.gd / herd_keeper.gd) ---
+# sheep_hp KHỚP SHEEP.hp = 25 của giai đoạn 2 (bản AI gốc là 30 — KHÔNG lấy;
+# SHEEP ở trên là nguồn sự thật của gameplay, dict này là cấu hình bộ não thú
+# + đàn; hai giá trị máu/thịt phải luôn bằng nhau).
+const ANIMALS := {
+	"sheep_hp": 25.0,
+	"sheep_meat": 100, # trữ lượng thịt của xác cừu (điểm "meat" cho nông dân xẻ)
+	"graze_time_min": 2.0,
+	"graze_time_max": 5.0,
+	"idle_time_min": 1.0,
+	"idle_time_max": 2.5,
+	"wander_radius": 110.0, # lang thang quanh điểm nhà không quá bán kính này
+	"wander_speed": 22.0,
+	"flee_speed": 95.0,
+	"scare_range": 64.0, # quân áp sát trong tầm này -> bỏ chạy
+	"flee_time": 1.2, # thời gian chạy trốn mỗi lần bị dọa/đánh
+	"scan_interval": 0.2, # nhịp quét nguy hiểm của đàn thú
+	"herd_cap": 6, # trần đàn mỗi bãi chăn (herd_keeper)
+	"herd_respawn_time": 20.0, # đàn dưới trần -> hồi sinh 1 con sau ngần này giây
+	"herd_radius": 220.0,
 }
 
 # Thời gian đống đổ nát của mỏ vàng lớn nằm lại trên map sau khi cạn
