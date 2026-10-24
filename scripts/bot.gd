@@ -13,6 +13,7 @@ var game: Node = null
 var attack_army_size: int = 8
 
 var _timer: float = 0.0
+var _market_timer: float = 0.0 # nhịp chờ giữa 2 lần dùng chợ (chống xả hàng)
 var _rng := RandomNumberGenerator.new()
 var _last_castle_hp: float = -1.0
 var _threatened: bool = false
@@ -33,6 +34,7 @@ func _process(delta: float) -> void:
 	if player == null or not player.alive or game == null or game.match_over:
 		return
 	_timer -= delta
+	_market_timer = maxf(0.0, _market_timer - delta)
 	_scout_wait -= delta
 	_scout_elapsed += delta
 	if _timer > 0.0:
@@ -56,6 +58,26 @@ func _pick_scout() -> Unit:
 		if u.owner_pid == player.pid and u.is_alive() and u.direct_mode == "":
 			return u
 	return null
+
+## Dùng chợ ở mức cơ bản: chỉ BÁN, chỉ khi kẹt vàng thật sự, mỗi lần 1 gói
+## của loại dư nhất. Không mua (bot tự farm đủ 3 loại còn lại).
+func _try_market() -> void:
+	if _market_timer > 0.0:
+		return
+	var cfg: Dictionary = Stats.MARKET
+	if int(player.resources["gold"]) >= int(cfg["bot_gold_floor"]):
+		return
+	var best_res := ""
+	var best_amt := int(cfg["bot_surplus"])
+	for k in Stats.MARKET["tradables"]:
+		var amt := int(player.resources.get(str(k), 0))
+		if amt > best_amt:
+			best_amt = amt
+			best_res = str(k)
+	if best_res == "":
+		return
+	if ctrl.market_sell(best_res):
+		_market_timer = float(cfg["bot_cooldown"])
 
 func _decide() -> void:
 	var castle: Castle = game.castles[player.pid]
@@ -130,6 +152,13 @@ func _decide() -> void:
 		ctrl.place_building("soldier_house", slots[5])
 	elif int(counts.get("house", 0)) < 2:
 		ctrl.place_building("house", slots[3])
+
+	# 3.5) CHỢ (mức cơ bản): kẹt VÀNG (dưới ngưỡng luyện 1 kiếm sĩ) mà có
+	# loại khác DƯ NHIỀU thì bán 1 gói lấy vàng — đặt TRƯỚC bước luyện quân
+	# để vàng vừa bán dùng được ngay trong cùng lượt quyết định. Ngưỡng dư
+	# cao (bán xong vẫn còn >= 150 dự trữ) + nhịp chờ dài nên bot không xả
+	# kho, không phá nhịp farm/xây tự nhiên của chính nó.
+	_try_market()
 
 	# 4) Huấn luyện: nông dân tới ngưỡng, rồi quân liên tục khi còn giới hạn.
 	if villagers < int(Stats.BOT["villager_target"]) and castle.queue_count() < 2:

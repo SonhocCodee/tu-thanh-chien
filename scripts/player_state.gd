@@ -27,6 +27,12 @@ var skill_id: String = ""
 var skill_cooldown: float = 0.0
 var skill_cooldown_left: float = 0.0
 
+# --- Chợ: hệ số giá TỪNG PHE cho từng loại giao dịch được (1.0 = giá gốc).
+# Chỉ phe đó tự làm trôi giá của mình qua giao dịch của chính mình; hồi dần
+# về 1.0 theo thời gian qua tick_market (Main gọi mỗi frame).
+var market_factor: Dictionary = {"wood": 1.0, "stone": 1.0, "meat": 1.0}
+var market_trades_total: int = 0
+
 func setup(p_pid: int, def: Dictionary) -> void:
 	pid = p_pid
 	display_name = def["name"]
@@ -37,6 +43,19 @@ func setup(p_pid: int, def: Dictionary) -> void:
 	var start: Dictionary = Stats.ECONOMY["start_resources"]
 	for k in Stats.RES_KEYS:
 		resources[k] = int(start[k])
+
+## Hồi giá chợ: độ lệch của từng factor so với 1.0 thu hẹp recover_rate
+## mỗi recover_interval giây (cấp số nhân theo delta — không phụ thuộc fps).
+func tick_market(delta: float) -> void:
+	if delta <= 0.0:
+		return
+	var cfg: Dictionary = Stats.MARKET
+	var shrink := pow(1.0 - float(cfg["recover_rate"]), delta / float(cfg["recover_interval"]))
+	for k in market_factor.keys():
+		var f := float(market_factor[k])
+		if not is_equal_approx(f, 1.0):
+			market_factor[k] = clampf(1.0 + (f - 1.0) * shrink,
+				float(cfg["factor_min"]), float(cfg["factor_max"]))
 
 func can_afford(cost: Dictionary) -> bool:
 	for k in cost.keys():

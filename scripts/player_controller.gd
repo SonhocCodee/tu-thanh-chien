@@ -52,6 +52,32 @@ func order_move(point: Vector2) -> bool:
 		return false
 	return game.exec_order_move(player, point)
 
+# ===================== CHỢ (buôn bán tại Thành chính) =====================
+# Bán/mua 1 GÓI 100 đơn vị gỗ/đá/thịt <-> vàng theo giá chợ CỦA PHE MÌNH
+# (giá trôi theo cung cầu từng phe — xem Stats.MARKET / Main.exec_market_*).
+
+func market_sell(res_key: String) -> bool:
+	if player == null or not player.alive:
+		return false
+	return game.exec_market_sell(player, res_key)
+
+func market_buy(res_key: String) -> bool:
+	if player == null or not player.alive:
+		return false
+	return game.exec_market_buy(player, res_key)
+
+## Bảng giá hiện tại của phe mình cho HUD: {loại: {sell, buy, factor}}.
+func market_prices() -> Dictionary:
+	if game == null or player == null:
+		return {}
+	return game.market_price_table(player.pid)
+
+## Lý do không giao dịch được của phe mình ("" = được) — cho HUD/bot.
+func market_block_reason(res_key: String, is_sell: bool) -> String:
+	if game == null or player == null:
+		return "invalid"
+	return game.market_block_reason(player, res_key, is_sell)
+
 # ===================== M2: CHỌN QUÂN + LỆNH TRỰC TIẾP =====================
 # Selection là trạng thái của "nguồn lệnh" này (bot không dùng, nhưng vẫn
 # nằm chung cửa để sau này người qua mạng cắm chung). Mọi lệnh trực tiếp

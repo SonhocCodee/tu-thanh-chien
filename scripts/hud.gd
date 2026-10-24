@@ -59,11 +59,12 @@ const UNIT_DESC := {
 	"lancer": "Tinh nhuệ cầm giáo dài, trâu và đâm xa — chiếm 2 ô quân.",
 }
 const PRODUCER_LABELS := {"castle": "Thành chính", "barracks": "Doanh trại"}
-const TAB_TITLES := ["XÂY DỰNG", "HUẤN LUYỆN", "DÂN & PHÂN BỔ"]
+const TAB_TITLES := ["XÂY DỰNG", "HUẤN LUYỆN", "DÂN & PHÂN BỔ", "CHỢ — THÀNH CHÍNH"]
 const TAB_HINTS := [
 	"Bấm thẻ rồi bấm vào vùng sáng quanh thành để đặt.",
 	"Bấm thẻ để xếp hàng luyện quân. Hàng chờ + tiến trình ở trên mỗi nhóm thẻ.",
 	"Nút +/- chia nông dân đi farm. Lệnh click phải ưu tiên hơn phân bổ.",
+	"Buôn bán tại Thành chính theo gói 100. Giá là của phe MÌNH: bán nhiều giá xuống, mua nhiều giá lên, để yên giá hồi dần về gốc.",
 ]
 const UNIT_FRAME := 192.0 # cạnh 1 frame trong sprite sheet quân (khớp unit.gd/villager.gd)
 # Vùng hình nhân vật trong frame đầu (đo từ alpha của sheet blue — mọi màu
@@ -112,6 +113,7 @@ var _prod_ui: Dictionary = {} # producer -> {queue_label, fill}
 var _alloc_labels: Dictionary = {}
 var _alloc_minus: Dictionary = {}
 var _alloc_plus: Dictionary = {}
+var _market_ui: Dictionary = {} # res_key -> {sell_btn, buy_btn, stock_label, trend_label}
 var _villager_label: Label = null
 var _hold_btn: Button = null
 var _attack_btn: Button = null
@@ -364,9 +366,10 @@ func _build_rail() -> void:
 		_tex(BUILD_ART["house"] % fac),
 		_tex("res://assets/ui/icons/icon_swords.png"),
 		_unit_frame_tex(UNIT_ART["pawn"] % fac, "pawn"),
+		_tex(RES_ICONS["gold"]),
 	]
-	var tab_tips := ["Xây dựng (phím 1)", "Huấn luyện & điều quân (phím 2)", "Dân & phân bổ (phím 3)"]
-	for i in 3:
+	var tab_tips := ["Xây dựng (phím 1)", "Huấn luyện & điều quân (phím 2)", "Dân & phân bổ (phím 3)", "Chợ — buôn bán tài nguyên tại Thành chính (phím 4)"]
+	for i in 4:
 		var b := _mk_tex_button(48, tab_icons[i], tab_tips[i])
 		b.toggle_mode = true
 		b.button_group = group
@@ -459,6 +462,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_3:
 				open_tab(2)
 				get_viewport().set_input_as_handled()
+			KEY_4:
+				open_tab(3)
+				get_viewport().set_input_as_handled()
 
 # main.gd hỏi HUD: điểm màn hình này có nằm trên UI không (thay cho dải
 # y cứng của panel cũ) — click trúng UI thì không tính là click map.
@@ -531,6 +537,7 @@ func _rebuild_tab() -> void:
 	_alloc_labels.clear()
 	_alloc_minus.clear()
 	_alloc_plus.clear()
+	_market_ui.clear()
 	_villager_label = null
 	_hold_btn = null
 	_attack_btn = null
@@ -543,6 +550,8 @@ func _rebuild_tab() -> void:
 			_build_tab_train()
 		2:
 			_build_tab_people()
+		3:
+			_build_tab_market()
 
 # --- Tab XÂY: thẻ sinh từ Stats.BUILDINGS (thêm nhà mới = thêm thẻ tự động) ---
 func _build_tab_build() -> void:
@@ -726,6 +735,107 @@ func _build_tab_people() -> void:
 	var note := _mk_label(info, "Lệnh trực tiếp bằng click phải (vào cây/mỏ)\nluôn ưu tiên hơn phân bổ ở đây.", 11, COL_TEXT_DARK2)
 	note.custom_minimum_size = Vector2(240, 30)
 
+# --- Tab CHỢ: buôn bán tại Thành chính, theo gói Stats.MARKET.lot ---
+# Mỗi loại giao dịch được (gỗ/đá/thịt) 1 nhóm: icon + lượng đang có, nút
+# BÁN (nhận vàng) / MUA (trả vàng) ghi GIÁ HIỆN TẠI của phe mình ngay trên
+# nút — giá trôi theo cung cầu nên _process cập nhật lại mỗi frame.
+func _build_tab_market() -> void:
+	var lot := int(Stats.MARKET["lot"])
+	var groups := HBoxContainer.new()
+	groups.add_theme_constant_override("separation", 10)
+	_tab_box.add_child(groups)
+	for key in Stats.MARKET["tradables"]:
+		var res_key := str(key)
+		var g := VBoxContainer.new()
+		g.add_theme_constant_override("separation", 3)
+		groups.add_child(g)
+		var head := HBoxContainer.new()
+		head.add_theme_constant_override("separation", 4)
+		g.add_child(head)
+		var icon_tex := _tex(RES_ICONS.get(res_key, ""))
+		if icon_tex != null:
+			var tr := TextureRect.new()
+			tr.texture = icon_tex
+			tr.custom_minimum_size = Vector2(22, 22)
+			tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			head.add_child(tr)
+		_mk_label(head, str(Stats.RES_LABELS.get(res_key, res_key.capitalize())), 14, COL_TEXT_DARK)
+		var stock := _mk_label(head, "", 13, COL_TEXT_DARK2)
+		var sell_btn := Button.new()
+		sell_btn.custom_minimum_size = Vector2(178, 42)
+		_style_wide_button(sell_btn, 13)
+		sell_btn.tooltip_text = "Bán %d %s lấy vàng theo giá chợ hiện tại của phe mình. Bán nhiều -> giá xuống." % [lot, str(Stats.RES_LABELS.get(res_key, res_key)).to_lower()]
+		sell_btn.pressed.connect(_on_market_sell.bind(res_key))
+		g.add_child(sell_btn)
+		var buy_btn := Button.new()
+		buy_btn.custom_minimum_size = Vector2(178, 42)
+		_style_wide_button(buy_btn, 13)
+		buy_btn.tooltip_text = "Mua %d %s bằng vàng theo giá chợ hiện tại của phe mình. Mua nhiều -> giá lên." % [lot, str(Stats.RES_LABELS.get(res_key, res_key)).to_lower()]
+		buy_btn.pressed.connect(_on_market_buy.bind(res_key))
+		g.add_child(buy_btn)
+		var trend := _mk_label(g, "", 11, COL_TEXT_DARK2)
+		trend.custom_minimum_size = Vector2(178, 15)
+		_market_ui[res_key] = {"sell_btn": sell_btn, "buy_btn": buy_btn, "stock_label": stock, "trend_label": trend}
+	_tab_box.add_child(VSeparator.new())
+	var info := VBoxContainer.new()
+	info.add_theme_constant_override("separation", 3)
+	_tab_box.add_child(info)
+	_mk_label(info, "Giá gốc: bán %d -> %d vàng,\nmua %d <- %d vàng (chênh = phí chợ)." % [
+		lot, int(Stats.MARKET["base_sell"]), lot, int(Stats.MARKET["base_buy"])], 11, COL_TEXT_DARK2)
+	_mk_label(info, "Mỗi phe 1 thị trường riêng —\ngiá địch trôi không ảnh hưởng giá mình.", 11, COL_TEXT_DARK2)
+
+func _market_reason_text(reason: String, res_key: String) -> String:
+	var label := str(Stats.RES_LABELS.get(res_key, res_key)).to_lower()
+	match reason:
+		"not_enough_resource":
+			return "Không đủ %s để bán (cần %d)." % [label, int(Stats.MARKET["lot"])]
+		"not_enough_gold":
+			return "Không đủ vàng để mua."
+		"no_space_gold":
+			return "Kho vàng đã đầy — không còn chỗ nhận vàng."
+		"no_space_resource":
+			return "Kho %s đã đầy — không còn chỗ chứa." % label
+	return "Không giao dịch được."
+
+func _on_market_sell(res_key: String) -> void:
+	var price: int = int(ctrl.market_prices().get(res_key, {}).get("sell", 0))
+	if ctrl.market_sell(res_key):
+		show_message("Chợ: đã bán %d %s, nhận %d vàng." % [
+			int(Stats.MARKET["lot"]), str(Stats.RES_LABELS.get(res_key, res_key)).to_lower(), price])
+	else:
+		show_message(_market_reason_text(ctrl.market_block_reason(res_key, true), res_key))
+
+func _on_market_buy(res_key: String) -> void:
+	var price: int = int(ctrl.market_prices().get(res_key, {}).get("buy", 0))
+	if ctrl.market_buy(res_key):
+		show_message("Chợ: đã mua %d %s, trả %d vàng." % [
+			int(Stats.MARKET["lot"]), str(Stats.RES_LABELS.get(res_key, res_key)).to_lower(), price])
+	else:
+		show_message(_market_reason_text(ctrl.market_block_reason(res_key, false), res_key))
+
+func _update_market_tab(p: PlayerState) -> void:
+	var prices := ctrl.market_prices()
+	var lot := int(Stats.MARKET["lot"])
+	for res_key in _market_ui.keys():
+		var ui: Dictionary = _market_ui[res_key]
+		var pr: Dictionary = prices.get(res_key, {})
+		(ui["stock_label"] as Label).text = "có: %d" % int(p.resources.get(res_key, 0))
+		var sell_btn := ui["sell_btn"] as Button
+		sell_btn.text = "BÁN %d → %d vàng" % [lot, int(pr.get("sell", 0))]
+		_set_btn_state(sell_btn, ctrl.market_block_reason(res_key, true) == "")
+		var buy_btn := ui["buy_btn"] as Button
+		buy_btn.text = "MUA %d ← %d vàng" % [lot, int(pr.get("buy", 0))]
+		_set_btn_state(buy_btn, ctrl.market_block_reason(res_key, false) == "")
+		var f := float(pr.get("factor", 1.0))
+		var trend := ui["trend_label"] as Label
+		if f < 0.97:
+			trend.text = "Giá đang THẤP hơn gốc (%d%%)" % int(round(f * 100.0))
+		elif f > 1.03:
+			trend.text = "Giá đang CAO hơn gốc (%d%%)" % int(round(f * 100.0))
+		else:
+			trend.text = "Giá ngang giá gốc"
+
 # =====================================================================
 # MINIMAP TRÒN — phải-dưới (mặt nạ tròn bằng shader discard, vòng viền vàng)
 # =====================================================================
@@ -838,7 +948,8 @@ func _build_help() -> void:
 		"CLICK PHẢI CÂY/MỎ: nông dân đã chọn đi farm đúng loại đó. CLICK PHẢI CỪU: nông dân đi săn lấy thịt.",
 		"CLICK PHẢI QUÂN/CÔNG TRÌNH ĐỊCH: tấn công (chỉ mục tiêu đã lộ diện — chưa lộ thì game từ chối, cần trinh sát trước).",
 		"LIA CAMERA: đưa chuột ra mép màn hình, phím WASD / mũi tên, hoặc bấm vào bản đồ nhỏ.",
-		"GIAO DIỆN: dải icon bên trái mở các tab Xây / Luyện / Dân. Phím Tab thu gọn/mở rộng panel, phím 1/2/3 mở tab tương ứng.",
+		"GIAO DIỆN: dải icon bên trái mở các tab Xây / Luyện / Dân / Chợ. Phím Tab thu gọn/mở rộng panel, phím 1/2/3/4 mở tab tương ứng.",
+		"CHỢ (tab Chợ, tại Thành chính): bán 100 gỗ/đá/thịt lấy vàng hoặc mua ngược lại bằng vàng. Giá là của phe mình và TRÔI theo cung cầu: bán dồn 1 loại thì giá loại đó sụt, mua dồn thì giá đội lên, để yên một lúc giá hồi dần về gốc — bán tháo lúc giá đáy là tự hại mình.",
 		"PHÂN BỔ: nút +/- ở tab Dân chia nông dân farm gỗ/đá/vàng/thịt — phân thịt là đi SĂN CỪU (lệnh click phải ưu tiên hơn phân bổ).",
 		"XÂY: bấm thẻ công trình ở tab Xây rồi bấm vào vùng sáng quanh thành. KHO CHUYÊN DỤNG: mỗi loại tài nguyên 1 kho riêng (gỗ/đá/vàng/thịt, chứa tối đa 500), đặt được ở mọi vùng đã khám phá — dân nộp đúng loại vào kho đó hoặc thành chính. PHÁ KHO ĐỊCH = CƯỚP tài nguyên đang chứa trong kho đó! LUYỆN QUÂN: thẻ ở tab Luyện.",
 		"THÁI ĐỘ: GIỮ NHÀ (quân ở nhà thủ) / TỔNG TẤN CÔNG (đánh thành địch đã lộ diện) — ở tab Luyện.",
@@ -1017,6 +1128,8 @@ func _process(delta: float) -> void:
 			_update_train_tab(p)
 		2:
 			_update_people_tab(p)
+		3:
+			_update_market_tab(p)
 
 func _update_train_tab(p: PlayerState) -> void:
 	for producer in _prod_ui.keys():
