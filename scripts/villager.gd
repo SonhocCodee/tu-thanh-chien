@@ -121,6 +121,14 @@ func _play(anim_name: String) -> void:
 func is_alive() -> bool:
 	return not _dead
 
+## Đang NHÀN RỖI (phục vụ phím/nút tìm nông dân nhàn — port từ nhánh
+## lenh-rts): không được phân bổ việc, không theo lệnh trực tiếp, tay
+## không, đang ở trạng thái chờ. "hold" (đứng giữ chỗ sau lệnh di chuyển
+## tay) cũng tính nhàn.
+func is_idle() -> bool:
+	return is_alive() and assigned == "" and not direct and carrying == 0 \
+		and (_state == "idle" or _state == "hold")
+
 func is_direct() -> bool:
 	return direct
 

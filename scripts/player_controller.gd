@@ -188,6 +188,57 @@ func order_selected_attack(target: Node) -> bool:
 			any = true
 	return any
 
+# ===================== LỆNH RTS NÂNG CAO (port từ nhánh lenh-rts) =====================
+# Chỉ quân LÍNH nhận các lệnh này (nông dân bỏ qua). Vẫn qua Main kiểm tra
+# hợp lệ như mọi lệnh khác — bot/người qua mạng sau này dùng chung cửa này.
+
+## Đánh-di-chuyển tới 1 điểm: tự đánh địch thấy được trên đường, tới nơi
+## giữ điểm. Trả về số quân đã nhận lệnh.
+func order_selected_attack_move(point: Vector2) -> int:
+	if player == null or not player.alive:
+		return 0
+	var count := 0
+	for u in _selected_military():
+		if game.exec_attack_move(player, u, point):
+			count += 1
+	return count
+
+## Tuần tra giữa vị trí hiện tại của từng quân (A) và point (B).
+func order_selected_patrol(point: Vector2) -> int:
+	if player == null or not player.alive:
+		return 0
+	var count := 0
+	for u in _selected_military():
+		if game.exec_patrol(player, u, point):
+			count += 1
+	return count
+
+## Hộ vệ 1 quân/công trình ĐỒNG MINH (target do Main kiểm tra phe/tính
+## sống; quân tự hộ vệ chính nó bị loại ở Main).
+func order_selected_guard(target: Node) -> int:
+	if player == null or not player.alive or target == null:
+		return 0
+	var count := 0
+	for u in _selected_military():
+		if game.exec_guard(player, u, target):
+			count += 1
+	return count
+
+## Chọn TOÀN BỘ quân lính còn sống của phe (phím Shift+A / nút HUD).
+func select_all_military() -> int:
+	if player == null or not player.alive:
+		return 0
+	var list: Array = game.military_units_of(player.pid)
+	set_selection(list)
+	return list.size()
+
+## Tìm nông dân NHÀN RỖI kế tiếp (xoay vòng): Main chọn hộ + lia camera
+## tới (phím "." / nút HUD). Trả null nếu không còn ai nhàn.
+func find_idle_villager() -> Villager:
+	if player == null or not player.alive:
+		return null
+	return game.exec_find_idle_villager(player)
+
 func is_castle_revealed(target_player_id: int) -> bool:
 	if game == null or player == null:
 		return false

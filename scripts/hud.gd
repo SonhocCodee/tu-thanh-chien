@@ -669,6 +669,19 @@ func _build_tab_train() -> void:
 	stance_box.add_child(_attack_btn)
 	var hint := _mk_label(stance_box, "Tấn công…: bấm thành địch\nđã lộ diện / điểm trinh sát.", 11, COL_TEXT_DARK2)
 	hint.custom_minimum_size = Vector2(158, 26)
+	# Nhóm LỆNH RTS nâng cao (port từ nhánh lenh-rts): chế độ lệnh chờ
+	# click cho quân đã chọn + 2 việc chất lượng sống. Mọi nút đều có
+	# phím tắt tương đương (ghi rõ trong nhãn nút + panel Trợ giúp).
+	_tab_box.add_child(VSeparator.new())
+	var rts_box := VBoxContainer.new()
+	rts_box.add_theme_constant_override("separation", 3)
+	_tab_box.add_child(rts_box)
+	_mk_label(rts_box, "LỆNH RTS", 13, COL_TEXT_DARK)
+	_rts_btn(rts_box, "ĐÁNH–DI CHUYỂN (A)", "Chọn quân, bấm nút này (hoặc phím A) rồi bấm 1 điểm trên map: quân đi tới đó và tự đánh mọi địch trên đường, tới nơi thì giữ điểm.", func() -> void: game.start_attack_move_mode())
+	_rts_btn(rts_box, "TUẦN TRA (P)", "Chọn quân, bấm nút này (hoặc phím P) rồi bấm điểm B: quân đi qua lại giữa vị trí hiện tại và điểm B, đánh địch dọc đường.", func() -> void: game.start_patrol_mode())
+	_rts_btn(rts_box, "HỘ VỆ (G)", "Chọn quân, bấm nút này (hoặc phím G) rồi bấm vào quân/công trình đồng minh — hoặc click PHẢI thẳng vào đồng minh.", func() -> void: game.start_guard_mode())
+	_rts_btn(rts_box, "CHỌN TOÀN QUÂN (Shift+A)", "Chọn toàn bộ quân lính còn sống của bạn.", _on_select_all_army)
+	_rts_btn(rts_box, "NÔNG DÂN NHÀN (.)", "Chọn + lia camera tới 1 nông dân đang không có việc (phím . — bấm tiếp để xoay vòng qua từng người).", _on_find_idle_villager)
 
 # --- Tab DÂN: phân bổ +/- theo đúng khóa tài nguyên của player ---
 func _build_tab_people() -> void:
@@ -949,6 +962,10 @@ func _build_help() -> void:
 		"CLICK PHẢI ĐẤT TRỐNG: quân đã chọn di chuyển tới đó.",
 		"CLICK PHẢI CÂY/MỎ: nông dân đã chọn đi farm đúng loại đó. CLICK PHẢI CỪU: nông dân đi săn lấy thịt.",
 		"CLICK PHẢI QUÂN/CÔNG TRÌNH ĐỊCH: tấn công (chỉ mục tiêu đã lộ diện — chưa lộ thì game từ chối, cần trinh sát trước).",
+		"ĐÁNH–DI CHUYỂN (phím A, hoặc nút ở tab Luyện): chọn quân, bấm A rồi bấm 1 điểm — quân đi tới đó, tự đánh mọi địch GẶP TRÊN ĐƯỜNG (vẫn theo luật sương mù: chỉ đánh địch đã lộ diện), tới nơi thì GIỮ ĐIỂM.",
+		"TUẦN TRA (phím P): chọn quân, bấm P rồi bấm điểm B — quân đi qua lại giữa vị trí hiện tại và điểm B, đánh địch dọc đường. Ra lệnh khác là huỷ tuần tra.",
+		"HỘ VỆ (phím G, hoặc CLICK PHẢI vào quân/công trình ĐỒNG MINH): quân bám theo bảo vệ đối tượng, đánh địch áp sát nó. Đối tượng bị phá/chết thì quân giữ điểm ngay tại chỗ.",
+		"CHỌN TOÀN QUÂN: Shift+A. TÌM NÔNG DÂN NHÀN RỖI: phím . (dấu chấm) — chọn 1 nông dân không có việc + lia camera tới, bấm tiếp để xoay vòng qua từng người. Hai việc này cũng có nút ở tab Luyện.",
 		"LIA CAMERA: đưa chuột ra mép màn hình, phím WASD / mũi tên, hoặc bấm vào bản đồ nhỏ.",
 		"GIAO DIỆN: dải icon bên trái mở các tab Xây / Luyện / Dân / Chợ. Phím Tab thu gọn/mở rộng panel, phím 1/2/3/4 mở tab tương ứng.",
 		"CHỢ (tab Chợ, tại Thành chính): bán 100 gỗ/đá/thịt lấy vàng hoặc mua ngược lại bằng vàng. Giá là của phe mình và TRÔI theo cung cầu: bán dồn 1 loại thì giá loại đó sụt, mua dồn thì giá đội lên, để yên một lúc giá hồi dần về gốc — bán tháo lúc giá đáy là tự hại mình.",
@@ -1031,6 +1048,30 @@ func show_end(won: bool) -> void:
 
 func _on_build(btype: String) -> void:
 	game.set_placement_mode(btype)
+
+# Nút lệnh RTS trong tab Luyện: cùng khuôn với nút thái độ (158-178px).
+func _rts_btn(parent: Node, text: String, tip: String, on_press: Callable) -> void:
+	var b := Button.new()
+	b.custom_minimum_size = Vector2(178, 36)
+	_style_wide_button(b, 12)
+	b.text = text
+	b.tooltip_text = tip
+	b.pressed.connect(on_press)
+	parent.add_child(b)
+
+func _on_select_all_army() -> void:
+	var n := ctrl.select_all_military()
+	if n > 0:
+		show_message("Đã chọn toàn bộ %d quân." % n)
+	else:
+		show_message("Chưa có quân nào để chọn.")
+
+func _on_find_idle_villager() -> void:
+	var v := ctrl.find_idle_villager()
+	if v != null:
+		show_message("Nông dân nhàn rỗi — đã chọn, camera đã lia tới (bấm . tiếp để xoay vòng).")
+	else:
+		show_message("Không có nông dân nhàn rỗi.")
 
 func _on_hold() -> void:
 	ctrl.set_stance("hold")
