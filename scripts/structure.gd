@@ -35,10 +35,10 @@ func get_aim_point() -> Vector2:
 	return global_position + Vector2(0, -30)
 
 func disp_destroyed() -> bool:
-	return use_snapshot ? display_destroyed : destroyed
+	return display_destroyed if use_snapshot else destroyed
 
 func effective_hp() -> float:
-	return use_snapshot ? display_hp : hp
+	return display_hp if use_snapshot else hp
 
 func is_burning_live() -> bool:
 	return is_alive() and hp < max_hp * 0.5
@@ -109,7 +109,7 @@ func _make_fire() -> void:
 func _update_fire() -> void:
 	if _fire == null:
 		return
-	var burning := use_snapshot ? display_burning : is_burning_live()
+	var burning: bool = display_burning if use_snapshot else is_burning_live()
 	_fire.visible = burning and not disp_destroyed()
 
 # --- Tháp bắn tự vệ dùng chung ---

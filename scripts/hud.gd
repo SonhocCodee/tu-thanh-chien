@@ -168,7 +168,7 @@ func _process(delta: float) -> void:
 	var t := int(game.elapsed)
 	_clock_label.text = "Thời gian: %02d:%02d" % [t / 60, t % 60]
 	_stance_label.text = "Thái độ quân: %s" % ("GIỮ NHÀ" if p.stance == "hold" else ("TỔNG TẤN CÔNG" if p.stance == "attack" else "TRINH SÁT"))
-	var total_v := game.villager_count(0)
+	var total_v: int = game.villager_count(0)
 	var busy := 0
 	for k in Stats.RES_KEYS:
 		(_alloc_labels[k] as Label).text = str(int(p.allocation[k]))
@@ -184,7 +184,7 @@ func _process(delta: float) -> void:
 		var btn := _train_castle_buttons[utype] as Button
 		btn.disabled = not _can_train(castle, utype)
 		btn.text = "%s (%s)" % [Stats.UNITS[utype]["label"], Stats.cost_text(Stats.TRAINING[utype]["cost"])]
-	var barracks := game.active_barracks(0)
+	var barracks: Building = game.active_barracks(0)
 	_barracks_queue_label.text = "chưa có doanh trại" if barracks == null else "hàng chờ: %d" % barracks.queue_count()
 	for utype in _train_barracks_buttons.keys():
 		var btn2 := _train_barracks_buttons[utype] as Button

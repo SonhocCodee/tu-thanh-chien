@@ -63,7 +63,7 @@ func _ready() -> void:
 	_refresh_display()
 
 func disp_constructed() -> bool:
-	return use_snapshot ? display_constructed : constructed
+	return display_constructed if use_snapshot else constructed
 
 func _refresh_display() -> void:
 	if _sprite == null:

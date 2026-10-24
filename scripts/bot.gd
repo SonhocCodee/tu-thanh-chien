@@ -44,7 +44,7 @@ func _decide() -> void:
 		_last_castle_hp = castle.hp
 
 	# 1) Phòng thủ: chỉ phản ứng với địch ĐÃ NHÌN THẤY hoặc thành đang mất máu.
-	var seen := ctrl.visible_enemies_near(castle.global_position, float(Stats.BOT["threat_radius"]))
+	var seen: Array = ctrl.visible_enemies_near(castle.global_position, float(Stats.BOT["threat_radius"]))
 	var castle_hit := castle.hp < _last_castle_hp - 0.5
 	_last_castle_hp = castle.hp
 	if (not seen.is_empty() or castle_hit) and not _threatened:
@@ -56,7 +56,7 @@ func _decide() -> void:
 	# 2) Phân bổ nông dân theo giai đoạn: đầu trận ưu tiên gỗ/đá để xây,
 	# có doanh trại rồi thì dồn vàng để lên quân.
 	var villagers: int = game.villager_count(player.pid)
-	var counts0 := game.building_counts(player.pid)
+	var counts0: Dictionary = game.building_counts(player.pid)
 	if villagers > 0:
 		var fw := 0.5
 		var fs := 0.3
@@ -84,7 +84,7 @@ func _decide() -> void:
 	# 4) Huấn luyện: nông dân tới ngưỡng, rồi quân liên tục khi còn giới hạn.
 	if villagers < int(Stats.BOT["villager_target"]) and castle.queue_count() < 2:
 		ctrl.queue_training(castle, "pawn")
-	var barracks := game.active_barracks(player.pid)
+	var barracks: Building = game.active_barracks(player.pid)
 	if barracks != null and barracks.queue_count() < 3:
 		ctrl.queue_training(barracks, "archer")
 	elif castle.queue_count() < 3:

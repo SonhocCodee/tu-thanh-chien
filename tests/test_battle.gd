@@ -25,6 +25,7 @@ func _new_game(bots: bool, time_scale: float) -> Node:
 		root.remove_child(_game)
 		_game.free()
 	Engine.time_scale = time_scale
+	paused = false
 	_game = load("res://scenes/main.tscn").instantiate()
 	_game.bots_enabled = bots
 	root.add_child(_game)
@@ -48,7 +49,7 @@ func _run() -> void:
 	var ctrl0 = g.human_controller()
 	var cap0: int = g.pop_cap(0)
 	var slots: Array = g.build_slots(0)
-	var placed := ctrl0.place_building("house", slots[0])
+	var placed: bool = ctrl0.place_building("house", slots[0])
 	t = 0.0
 	while t < 60.0 and g.pop_cap(0) <= cap0:
 		await _wait(2.0)
@@ -60,7 +61,7 @@ func _run() -> void:
 	p0.resources["gold"] = 5000
 	p0.resources["wood"] = 5000
 	var gold_before: int = p0.resources["gold"]
-	var ok_train := ctrl0.queue_training(g.castles[0], "pawn")
+	var ok_train: bool = ctrl0.queue_training(g.castles[0], "pawn")
 	var gold_after: int = p0.resources["gold"]
 	var cost_pawn: int = Stats.TRAINING["pawn"]["cost"]["gold"]
 	var blocked := false
@@ -98,7 +99,7 @@ func _run() -> void:
 		t += 2.0
 	var army: int = g.military_count(0)
 	# Chưa lộ diện thì lệnh tấn công đích danh phải bị từ chối.
-	var rejected := not ctrl0.set_stance("attack", 2)
+	var rejected: bool = not ctrl0.set_stance("attack", 2)
 	# Trinh sát tới gần thành Đỏ qua API di chuyển.
 	ctrl0.order_move(Vector2(985, 215))
 	t = 0.0
@@ -174,7 +175,7 @@ func _run() -> void:
 		await _wait(1.0)
 		t += 1.0
 	var enemy_unit: Unit = null
-	for n in get_tree().get_nodes_in_group("units"):
+	for n in get_nodes_in_group("units"):
 		if (n as Unit).owner_pid == 2:
 			enemy_unit = n
 			break

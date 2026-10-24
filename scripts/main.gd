@@ -350,10 +350,10 @@ func build_slots(pid: int) -> Array:
 	var mx := 1.0 if c.x < 640.0 else -1.0
 	var my := 1.0 if c.y < 320.0 else -1.0
 	return [
-		c + Vector2(mx * 105, my * 82),
-		c + Vector2(mx * -108, my * 82),
-		c + Vector2(mx * 100, my * -88),
-		c + Vector2(mx * -102, my * -88),
+		c + Vector2(mx * -105, my * -80),
+		c + Vector2(mx * -105, my * 80),
+		c + Vector2(mx * 30, my * -102),
+		c + Vector2(mx * 30, my * 102),
 	]
 
 func exec_place_building(player: PlayerState, building_type: String, pos: Vector2) -> bool:
@@ -554,7 +554,7 @@ func on_building_completed(b: Building) -> void:
 	players[b.owner_pid].buildings_completed_total += 1
 
 func _eliminate_player(pid: int) -> void:
-	var player := players[pid]
+	var player: PlayerState = players[pid]
 	if not player.alive:
 		return
 	player.alive = false
