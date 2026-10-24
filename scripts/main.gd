@@ -218,10 +218,12 @@ func _build_map() -> void:
 		if i % 2 == 0:
 			var at := AtlasTexture.new()
 			at.atlas = load("res://assets/deco/tree.png")
-			at.region = Rect2(0, 0, 256, 256)
+			# Cùng luật cắt với resource_node.gd: 1 frame = 192x256 (cắt
+			# 256 dính lát cây thứ 2); bù x đi 32*0.4 ~ -13 giữ nguyên vị trí.
+			at.region = Rect2(0, 0, 192, 256)
 			spr.texture = at
 			spr.scale = Vector2(0.4, 0.4)
-			spr.position = deco_pos[i] + Vector2(0, -40)
+			spr.position = deco_pos[i] + Vector2(-13, -40)
 		else:
 			spr.texture = load("res://assets/deco/rock1.png")
 			spr.position = deco_pos[i]
