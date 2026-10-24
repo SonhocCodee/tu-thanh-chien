@@ -173,10 +173,16 @@ func _refresh_sprite() -> void:
 			else:
 				var at := AtlasTexture.new()
 				at.atlas = load("res://assets/deco/tree.png")
-				at.region = Rect2(0, 0, 256, 256)
+				# Dải tree.png: 8 cây, bước nhảy 192px/cây (đo bbox: cây 0 ở
+				# x 37..155, tâm 96). Cắt đúng 1 frame 192x256 — cắt 256 như
+				# trước dính lát x 230..255 của cây thứ 2 thành mảng lá lơ
+				# lửng bên phải thân. Tâm cây trong frame 192 = tâm region,
+				# còn region 256 cũ lệch trái 32px -> bù position.x đi
+				# 32*scale (-20 cỡ lớn / -14 cỡ nhỏ) để cây không nhảy vị trí.
+				at.region = Rect2(0, 0, 192, 256)
 				_sprite.texture = at
 				_sprite.scale = Vector2(0.62, 0.62) if is_big else Vector2(0.44, 0.44)
-				_sprite.position = Vector2(0, -46)
+				_sprite.position = Vector2(-20, -46) if is_big else Vector2(-14, -46)
 		"stone":
 			# Đá XÁM Rock1/2 — nhìn vào phải ra ĐÁ (ASSETS.md §2.1).
 			_sprite.texture = load("res://assets/deco/rock%d.png" % (variant % 2 + 1))
