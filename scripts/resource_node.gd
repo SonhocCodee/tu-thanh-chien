@@ -32,6 +32,20 @@ var _regen_left: float = -1.0 # >0 khi đang là gốc chờ mọc lại (chỉ 
 var _spr_base_pos: Vector2 = Vector2.ZERO
 var _rng := RandomNumberGenerator.new()
 
+# Hình gốc của từng Stump trên canvas 192x256 (đo alpha bbox bằng PIL):
+# mỗi biến thể 1 cỡ + 1 vị trí khác hẳn nhau trong canvas (cx = tâm ngang của
+# hình, bottom = đáy hình, w/h = cỡ hình thật) — KHÔNG để scale đồng loạt
+# được (bản cũ scale 1.3 đều -> stump1 hiện 62px, to hơn cả cây nhỏ 52px).
+const STUMP_ART := {
+	1: {"cx": 99.0, "bottom": 240.0, "w": 48.0, "h": 40.0},
+	2: {"cx": 94.5, "bottom": 245.0, "w": 43.0, "h": 35.0},
+	3: {"cx": 97.0, "bottom": 232.0, "w": 24.0, "h": 35.0},
+	4: {"cx": 99.0, "bottom": 228.0, "w": 26.0, "h": 26.0},
+}
+# Cạnh lớn nhất của gốc hiển thị trong game ứng với CÂY NHỎ; cây lớn thì gốc
+# lớn theo đúng tỉ lệ scale của cây (0.62/0.44) — vẫn nhỏ hơn cây của nó rõ rệt.
+const STUMP_TARGET := 34.0
+
 # Vết nứt đá: các polyline (tọa độ local quanh tâm sprite), hiện dần theo mức cạn.
 const _CRACKS: Array = [
 	[Vector2(-6, -26), Vector2(-2, -14), Vector2(-7, -4)],
@@ -164,12 +178,7 @@ func _refresh_sprite() -> void:
 		"wood":
 			if _is_stump:
 				_sprite.texture = load("res://assets/resources/stump%d.png" % (variant % 4 + 1))
-				# Canvas Stump 192x256 gần như trong suốt: hình gốc thật chỉ
-				# ~24x34px ở đáy canvas (đo bbox pixel đặc) — phải phóng to
-				# và nâng vị trí để đáy gốc chạm đúng điểm node, không là
-				# 12x17px vô hình như scale 0.5 ban đầu.
-				_sprite.scale = Vector2(1.3, 1.3)
-				_sprite.position = Vector2(0, -140)
+				_apply_stump_transform()
 			else:
 				var at := AtlasTexture.new()
 				at.atlas = load("res://assets/deco/tree.png")
@@ -203,6 +212,23 @@ func _refresh_sprite() -> void:
 			_sprite.scale = Vector2(0.85, 0.85)
 			_sprite.position = Vector2(0, -12)
 	_spr_base_pos = _sprite.position
+
+## Chuẩn hoá hiển thị GỐC cây theo TỪNG biến thể (số đo ở STUMP_ART):
+## cạnh lớn nhất của hình gốc = STUMP_TARGET px (nhân thêm tỉ lệ cây lớn),
+## và chân gốc ngồi ĐÚNG vị trí thân cây vừa đổ: tâm ngang của gốc trùng tâm
+## thân cây đứng, đáy gốc trùng đáy hình cây đứng (toạ độ node). Hình cây
+## đứng hiện tại: sprite (0,-46), region 256x256, hình cây trong region có
+## tâm ngang lệch -32px và đáy ở +112px so với tâm region (đo từ tree.png).
+func _apply_stump_transform() -> void:
+	var info: Dictionary = STUMP_ART[variant % 4 + 1]
+	var tree_scale := 0.62 if is_big else 0.44
+	var s := STUMP_TARGET / maxf(float(info["w"]), float(info["h"])) * (tree_scale / 0.44)
+	_sprite.scale = Vector2(s, s)
+	var trunk_cx := -32.0 * tree_scale
+	var base_y := -46.0 + 112.0 * tree_scale
+	_sprite.position = Vector2(
+		trunk_cx - (float(info["cx"]) - 96.0) * s,
+		base_y - (float(info["bottom"]) - 128.0) * s)
 
 func _update_size_by_amount() -> void:
 	if _sprite == null or max_amount <= 0:

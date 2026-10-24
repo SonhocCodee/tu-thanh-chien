@@ -188,11 +188,15 @@ const SHEEP := {
 # Điểm chọn mục tiêu (thấp = ưu tiên): score = khoảng cách * 1.0
 #   + target_hp_bias * (máu địch / máu tối đa)   -> địch yếu máu bị "kết liễu" trước
 #   + target_type_bias[loại địch]               -> âm = ưu tiên đánh trước
+#   + target_focus_penalty * (số ĐỒNG MINH đang cùng nhắm địch đó)
+#                                               -> CHIA LỬA: cả đội không dồn
+#                                                  hết vào 1 mục tiêu nữa
 #   - target_stickiness nếu là mục tiêu hiện tại -> tránh nhảy mục tiêu liên tục.
 const UNIT_AI := {
 	"think_interval": 0.18, # nhịp tái chọn mục tiêu (giây), lệch pha theo từng quân
 	"target_hp_bias": 150.0, # địch đầy máu +150 điểm ~ tương đương 150px xa hơn
 	"target_type_bias": {"warrior": 0.0, "archer": -40.0}, # cung thủ: nguy hiểm + máu mỏng -> diệt trước
+	"target_focus_penalty": 45.0, # mỗi đồng minh đang nhắm cùng 1 địch -> +45 điểm cho địch đó
 	"target_stickiness": 30.0,
 	"leash_hold": 400.0, # giữ nhà: không đuổi địch quá bán kính này tính từ THÀNH
 	"leash_move": 300.0, # đi trinh sát: không đuổi quá bán kính này tính từ ĐIỂM ĐƯỢC LỆNH
@@ -200,6 +204,10 @@ const UNIT_AI := {
 	"separation_push": 85.0, # tốc độ đẩy tách tối đa (px/s, khi chồng khít)
 	"separation_interval": 0.1, # nhịp tính lại lực tách (giây), lệch pha từng quân
 	"archer_kite_distance": 84.0, # địch áp sát gần hơn mức này -> cung thủ vừa bắn vừa lùi giữ tầm
+	# Kite PHẢI TRẢ GIÁ (cân bằng can-bang): vừa lùi vừa bắn chỉ còn 55% tốc độ
+	# thường (66 -> ~36 px/s) — kiếm sĩ (72) áp sát thực ~36 px/s, băng vùng
+	# kite 84->36px trong ~1,3s thay vì ~8s chết dọc đường như trước.
+	"archer_kite_speed_factor": 0.55,
 }
 
 # --- AI nông dân (villager.gd): bỏ chạy khi nguy hiểm ---
