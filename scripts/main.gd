@@ -86,6 +86,9 @@ var storedemo_mode: bool = false
 var _storedemo_stage: int = 0
 var _storedemo_timer: float = 0.0
 var _storedemo_enemy: Building = null
+var agesdemo_mode: bool = false
+var _agesdemo_stage: int = 0
+var _agesdemo_timer: float = 0.0
 var _g2_tree: ResourceNode = null
 var _g2_hunter: Villager = null
 var _g2_store: Building = null
@@ -125,6 +128,10 @@ func _ready() -> void:
 		storedemo_mode = true
 		bots_enabled = false
 		Engine.time_scale = 2.0
+	if "--agesdemo" in args:
+		agesdemo_mode = true
+		bots_enabled = false
+		Engine.time_scale = 3.0
 	_build_players()
 	_build_map()
 	_build_resource_nodes()
@@ -168,6 +175,8 @@ func _process(delta: float) -> void:
 		_demo_pop_update(delta)
 	if storedemo_mode:
 		_demo_store_update(delta)
+	if agesdemo_mode:
+		_demo_ages_update(delta)
 
 # ===================== DỰNG BAN ĐẦU =====================
 
@@ -183,6 +192,117 @@ func _build_players() -> void:
 
 func get_player(pid: int) -> PlayerState:
 	return players[pid]
+
+# ===================== LÊN ĐỜI / NÂNG CẤP / NGHIÊN CỨU QUÂN =====================
+# Nguồn sự thật: PlayerState.age (Đời của phe) + PlayerState.unit_levels
+# (cấp nghiên cứu theo loại quân). Mọi hiệu lực theo cấp đọc qua 2 hàm này.
+
+func get_age(pid: int) -> int:
+	return players[pid].age
+
+func get_unit_level(pid: int, unit_type: String) -> int:
+	return int(players[pid].unit_levels.get(unit_type, 1))
+
+## LÊN ĐỜI tại Thành chính: nghiên cứu "age" trên thành; xong -> Đời +1,
+## thành đổi sprite. Đời là cổng cho nâng cấp nhà / nghiên cứu quân cấp cao.
+func exec_start_age_up(player: PlayerState, castle: Structure) -> bool:
+	if castle == null or castle.owner_pid != player.pid or not (castle is Castle):
+		return false
+	if player.age >= int(Stats.MAX_AGE) or castle.is_researching() or not castle.is_alive():
+		return false
+	var def: Dictionary = Stats.AGES[player.age + 1]
+	if not spend_resources(player, def["cost"]):
+		return false
+	return castle.start_research("age", float(def["time"]))
+
+## NGHIÊN CỨU QUÂN theo loại: kiếm/cung/giáo tại Doanh trại, nông dân tại
+## Thành. Cấp đích không vượt Đời hiện tại (cổng Đời). Xong -> áp cho MỌI
+## quân loại đó của phe (đang sống qua refresh_level + luyện sau qua setup).
+func exec_start_unit_research(player: PlayerState, building: Structure, unit_type: String) -> bool:
+	if building == null or building.owner_pid != player.pid or not building.can_produce():
+		return false
+	if building is Building and not (building as Building).constructed:
+		return false
+	# Đúng nơi nghiên cứu: nông dân ở Thành, quân ở Doanh trại.
+	if unit_type == "pawn":
+		if building.producer_kind != "castle":
+			return false
+	elif building.producer_kind != "barracks":
+		return false
+	var cur := get_unit_level(player.pid, unit_type)
+	if cur >= int(Stats.MAX_LEVEL):
+		return false
+	if cur + 1 > player.age: # cổng Đời
+		return false
+	if building.is_researching():
+		return false
+	var def: Dictionary = Stats.UPGRADES["unit_research"][unit_type][cur + 1]
+	if not spend_resources(player, def["cost"]):
+		return false
+	return building.start_research("unit:" + unit_type, float(def["time"]))
+
+## NÂNG CẤP 1 NHÀ tại chỗ: cấp đích không vượt Đời; thi công theo cơ chế
+## tiến độ của nhánh nền (nhà tự hoàn thành theo thời gian, vẫn hoạt động
+## trong lúc nâng); xong -> complete_upgrade áp máu/sprite/ích lợi.
+func exec_start_building_upgrade(player: PlayerState, building: Building) -> bool:
+	if building == null or building.owner_pid != player.pid:
+		return false
+	if not building.constructed or not building.is_alive():
+		return false
+	if building.level >= int(Stats.MAX_LEVEL):
+		return false
+	if building.level + 1 > player.age: # cổng Đời
+		return false
+	if building.is_researching():
+		return false
+	var cost := Stats.building_upgrade_cost(building.building_type, building.level + 1)
+	if not spend_resources(player, cost):
+		return false
+	return building.start_research("upgrade", Stats.building_upgrade_time(building.building_type, building.level + 1))
+
+## Nghiên cứu hoàn thành (Structure._tick_research gọi): áp hiệu lực thật.
+func on_research_completed(s: Structure, key: String) -> void:
+	var pid := s.owner_pid
+	if pid < 0 or pid >= players.size():
+		return
+	var player: PlayerState = players[pid]
+	if key == "age":
+		player.age = mini(player.age + 1, int(Stats.MAX_AGE))
+		player.ages_reached_total += 1
+		if s is Castle:
+			(s as Castle)._refresh_display()
+		if pid == HUMAN_PID and _hud != null:
+			_hud.show_message("Đã lên ĐỜI %d! Mở khoá nâng cấp nhà + nghiên cứu quân cấp %d." % [player.age, player.age])
+	elif key.begins_with("unit:"):
+		var unit_type := key.trim_prefix("unit:")
+		player.unit_levels[unit_type] = mini(get_unit_level(pid, unit_type) + 1, int(Stats.MAX_LEVEL))
+		player.researches_completed_total += 1
+		# Áp NGAY cho mọi quân/nông dân loại đó đang sống.
+		if unit_type == "pawn":
+			for n in get_tree().get_nodes_in_group("villagers"):
+				var v := n as Villager
+				if v.owner_pid == pid:
+					v.refresh_level()
+		else:
+			for n in get_tree().get_nodes_in_group("units"):
+				var u := n as Unit
+				if u.owner_pid == pid and u.unit_type == unit_type:
+					u.refresh_level()
+		# Cung thủ lên cấp -> cung trực tháp cũng đổi hình + sát thương.
+		if unit_type == "archer":
+			for n in get_tree().get_nodes_in_group("buildings"):
+				var b := n as Building
+				if b.owner_pid == pid and b.building_type == "tower":
+					b.refresh_crew_frames()
+		if pid == HUMAN_PID and _hud != null:
+			_hud.show_message("%s đã lên cấp %d (áp cho toàn bộ quân loại này)!" % [
+				str(Stats.UNITS[unit_type]["label"]), get_unit_level(pid, unit_type)])
+	elif key == "upgrade" and s is Building:
+		(s as Building).complete_upgrade()
+		player.upgrades_completed_total += 1
+		if pid == HUMAN_PID and _hud != null:
+			_hud.show_message("%s đã nâng lên cấp %d!" % [
+				str(Stats.BUILDINGS[(s as Building).building_type]["label"]), (s as Building).level])
 
 func human_controller() -> PlayerController:
 	return controllers[HUMAN_PID]
@@ -516,7 +636,7 @@ func _build_hud() -> void:
 	_hud.setup(self, human_controller())
 	add_child(_hud)
 	# Panel hướng dẫn tự mở khi vào trận (trừ chế độ demo chụp ảnh).
-	if not demo_mode and not m2demo_mode and not g2demo_mode and not popdemo_mode and not storedemo_mode:
+	if not demo_mode and not m2demo_mode and not g2demo_mode and not popdemo_mode and not storedemo_mode and not agesdemo_mode:
 		_hud.show_help()
 
 # ===================== SƯƠNG MÙ =====================
@@ -582,6 +702,7 @@ func _refresh_human_display() -> void:
 			s.display_destroyed = s.destroyed
 			if s is Building:
 				s.display_constructed = (s as Building).constructed
+				s.display_level = (s as Building).level
 			s._refresh_display()
 			s.queue_redraw()
 		else:
@@ -775,7 +896,11 @@ func exec_queue_training(player: PlayerState, building: Structure, unit_type: St
 				_hud.show_message("Đã đạt GIỚI HẠN DÂN SỐ %d/%d — xây thêm NHÀ DÂN để tăng!" % [pop_used(player.pid), pop_cap(player.pid)])
 		return false
 	spend_resources(player, def["cost"])
-	building.enqueue(unit_type, float(def["time"]) / float(prod["speed"]))
+	# Doanh trại cấp cao luyện NHANH hơn (hệ số thời gian theo cấp nhà).
+	var total_time := float(def["time"]) / float(prod["speed"])
+	if building is Building and (building as Building).building_type == "barracks":
+		total_time *= float(Stats.UPGRADES["barracks_train_factor"][(building as Building).level - 1])
+	building.enqueue(unit_type, total_time)
 	return true
 
 func _clear_direct_orders(pid: int) -> void:
@@ -1018,6 +1143,21 @@ func click_select(pos: Vector2) -> void:
 			best = v
 	if best != null:
 		human_controller().set_selection([best])
+		return
+	# Không trúng quân nào: bấm trúng CÔNG TRÌNH/THÀNH của mình -> chọn
+	# công trình (HUD mở panel Lên Đời / Nâng cấp / Nghiên cứu quân).
+	var bs: Structure = null
+	var bs_d := 1e9
+	for n in get_tree().get_nodes_in_group("structures"):
+		var s := n as Structure
+		if s.owner_pid != HUMAN_PID or not s.is_alive():
+			continue
+		var d := s.global_position.distance_to(pos)
+		if d <= s.radius + 16.0 and d < bs_d:
+			bs_d = d
+			bs = s
+	if bs != null:
+		human_controller().set_structure_selection(bs)
 	else:
 		human_controller().clear_selection()
 
@@ -1028,7 +1168,8 @@ func pop_cap(pid: int) -> int:
 	for n in get_tree().get_nodes_in_group("buildings"):
 		var b := n as Building
 		if b.owner_pid == pid and b.building_type == "house" and b.constructed and b.is_alive():
-			cap += int(Stats.ECONOMY["pop_per_house"])
+			# Dân số theo CẤP của từng Nhà Dân (8 -> 12 -> 16).
+			cap += int(Stats.UPGRADES["house_pop"][b.level - 1])
 	return cap
 
 func pop_used(pid: int) -> int:
@@ -1058,11 +1199,11 @@ func pop_used(pid: int) -> int:
 ## Nhà Lính đã xây xong cộng army_bonus ô. Chỉ tính QUÂN (không tính dân).
 func army_cap(pid: int) -> int:
 	var cap := int(Stats.ECONOMY["army_base"])
-	var bonus := int(Stats.BUILDINGS["soldier_house"]["army_bonus"])
 	for n in get_tree().get_nodes_in_group("buildings"):
 		var b := n as Building
 		if b.owner_pid == pid and b.building_type == "soldier_house" and b.constructed and b.is_alive():
-			cap += bonus
+			# Ô quân theo CẤP của từng Nhà Lính (6 -> 9 -> 12).
+			cap += int(Stats.UPGRADES["soldier_army_bonus"][b.level - 1])
 	return cap
 
 ## Ô quân đã dùng: quân đang sống + quân đang chờ luyện (theo pop_cost).
@@ -1190,11 +1331,16 @@ func spawn_trained_unit(pid: int, unit_type: String, _producer: Structure) -> vo
 	_units_layer.add_child(u)
 	u.died.connect(_on_unit_died)
 
-func spawn_projectile(from_pos: Vector2, target, damage: float, owner_pid: int, speed: float, color_key: String) -> void:
-	if not _arrow_textures.has(color_key):
-		_arrow_textures[color_key] = load("res://assets/units/%s/arrow.png" % color_key)
+func spawn_projectile(from_pos: Vector2, target, damage: float, owner_pid: int, speed: float, color_key: String, p_level: int = 1) -> void:
+	# Mũi tên theo CẤP của cung thủ bắn (cấp 2/3 dùng bộ vòng 4).
+	var key := color_key + ":" + str(p_level)
+	if not _arrow_textures.has(key):
+		if p_level >= 2:
+			_arrow_textures[key] = load("res://assets/upgrades/units/%s/arrow_lv%d.png" % [color_key, p_level])
+		else:
+			_arrow_textures[key] = load("res://assets/units/%s/arrow.png" % color_key)
 	var p := ProjectileScene.instantiate() as Projectile
-	p.setup(from_pos, target, damage, owner_pid, speed, _arrow_textures[color_key])
+	p.setup(from_pos, target, damage, owner_pid, speed, _arrow_textures[key])
 	p.z_index = 15
 	add_child(p)
 
@@ -2017,6 +2163,114 @@ func _demo_store_update(delta: float) -> void:
 				_take_shot("res://screenshots/store_cuop_kho.png")
 				_storedemo_stage = 5
 		5:
+			get_tree().quit()
+
+# ===================== DEMO LÊN ĐỜI / NÂNG CẤP (chạy với -- --agesdemo, không bot) ====
+# Sân khấu chụp ảnh cho hệ Lên Đời: lên thẳng Đời 3 qua đường exec thật
+# (rút ngắn đồng hồ nghiên cứu), nâng Nhà Dân lên cấp 3, nghiên cứu Kiếm sĩ
+# lên cấp 3 rồi đẻ 1 đội kiếm sĩ cấp 3 đứng cạnh nông dân cấp 3.
+
+func _demo_ages_update(delta: float) -> void:
+	if elapsed > 120.0:
+		get_tree().quit()
+		return
+	var p0: PlayerState = players[HUMAN_PID]
+	var castle := castles[HUMAN_PID] as Castle
+	match _agesdemo_stage:
+		0:
+			for k in Stats.RES_KEYS:
+				grant_resource(HUMAN_PID, k, 6000)
+			exec_set_allocation(p0, 0, 0, 0, 0)
+			var slots := build_slots(HUMAN_PID)
+			exec_place_building(p0, "house", slots[0])
+			exec_place_building(p0, "barracks", slots[1])
+			for n in get_tree().get_nodes_in_group("buildings"):
+				var b := n as Building
+				if b.owner_pid == HUMAN_PID:
+					b.constructed = true
+					b._refresh_display()
+			exec_start_age_up(p0, castle)
+			if castle.is_researching():
+				castle.research_left = 0.1
+			_agesdemo_stage = 1
+		1:
+			if p0.age >= 2:
+				var barracks := active_barracks(HUMAN_PID)
+				exec_start_unit_research(p0, barracks, "warrior")
+				if barracks.is_researching():
+					barracks.research_left = 0.1
+				exec_start_age_up(p0, castle)
+				if castle.is_researching():
+					castle.research_left = 0.1
+				_agesdemo_stage = 2
+		2:
+			if p0.age >= 3 and get_unit_level(HUMAN_PID, "warrior") >= 2:
+				var barracks2 := active_barracks(HUMAN_PID)
+				exec_start_unit_research(p0, barracks2, "warrior")
+				if barracks2.is_researching():
+					barracks2.research_left = 0.1
+				exec_start_unit_research(p0, castle, "pawn")
+				if castle.is_researching():
+					castle.research_left = 0.1
+				var house: Building = null
+				for n in get_tree().get_nodes_in_group("buildings"):
+					var b := n as Building
+					if b.owner_pid == HUMAN_PID and b.building_type == "house":
+						house = b
+				if house != null:
+					exec_start_building_upgrade(p0, house)
+					if house.is_researching():
+						house.research_left = 0.1
+				_agesdemo_stage = 3
+		3:
+			var house3: Building = null
+			for n in get_tree().get_nodes_in_group("buildings"):
+				var b := n as Building
+				if b.owner_pid == HUMAN_PID and b.building_type == "house":
+					house3 = b
+			if house3 != null and house3.level >= 2 and not house3.is_researching():
+				exec_start_building_upgrade(p0, house3)
+				if house3.is_researching():
+					house3.research_left = 0.1
+			# Nông dân cần nghiên cứu LẦN 2 mới tới cấp 3 (lần 1 ở stage 2).
+			if get_unit_level(HUMAN_PID, "pawn") < 3 and not castle.is_researching():
+				exec_start_unit_research(p0, castle, "pawn")
+				if castle.is_researching():
+					castle.research_left = 0.1
+			if p0.age >= 3 and get_unit_level(HUMAN_PID, "warrior") >= 3 \
+					and get_unit_level(HUMAN_PID, "pawn") >= 3 \
+					and house3 != null and house3.level >= 3:
+				_agesdemo_stage = 4
+		4:
+			# Đội kiếm sĩ cấp 3 đứng hàng trước thành Đời 3 + nhà cấp 3.
+			for i in 4:
+				spawn_trained_unit(HUMAN_PID, "warrior", castle)
+			var rally := rally_point(HUMAN_PID)
+			var idx := 0
+			for n in get_tree().get_nodes_in_group("units"):
+				var u := n as Unit
+				if u.owner_pid == HUMAN_PID:
+					u.slot_offset = Vector2(150 + idx * 52, -30) - (rally - CASTLE_POS[HUMAN_PID])
+					u.global_position = rally + u.slot_offset
+					idx += 1
+			set_camera_to(CASTLE_POS[HUMAN_PID] + Vector2(40, -40))
+			_agesdemo_timer = 0.9
+			_agesdemo_stage = 5
+		5:
+			_agesdemo_timer -= delta
+			if _agesdemo_timer <= 0.0:
+				_take_shot("res://screenshots/ages_thanh_doi3_nha_cap3.png")
+				_agesdemo_stage = 6
+		6:
+			set_camera_to(rally_point(HUMAN_PID) + Vector2(120, -20))
+			_agesdemo_timer = 0.7
+			_agesdemo_stage = 7
+		7:
+			_agesdemo_timer -= delta
+			if _agesdemo_timer <= 0.0:
+				_take_shot("res://screenshots/ages_quan_cap3.png")
+				_agesdemo_stage = 8
+		8:
 			get_tree().quit()
 
 # ===================== LỚP PHỦ SƯƠNG MÙ (vẽ cho người chơi) =====================

@@ -35,15 +35,16 @@ const BUILD_ART := {
 	"store_stone": "res://assets/buildings/store_stone_%s.png",
 	"store_gold": "res://assets/buildings/store_gold_%s.png",
 	"store_meat": "res://assets/buildings/store_meat_%s.png",
+	"soldier_house": "res://assets/buildings/soldier_house_%s.png",
 }
 const BUILD_DESC := {
 	"house": "Tăng giới hạn dân số.",
 	"barracks": "Nơi luyện kiếm sĩ và cung thủ, tốc độ nhanh hơn thành chính.",
 	"tower": "Cung thủ đứng trên tháp bắn tên vào địch trong tầm. Giữ 1 ô dân cho cung thủ.",
-	"store_wood": "Chỉ chứa GỖ (tối đa 500). Dân vác gỗ nộp ở đây hoặc thành chính. Địch phá kho sẽ CƯỚP số gỗ trong kho!",
-	"store_stone": "Chỉ chứa ĐÁ (tối đa 500). Dân vác đá nộp ở đây hoặc thành chính. Địch phá kho sẽ CƯỚP số đá trong kho!",
-	"store_gold": "Chỉ chứa VÀNG (tối đa 500). Dân vác vàng nộp ở đây hoặc thành chính. Địch phá kho sẽ CƯỚP số vàng trong kho!",
-	"store_meat": "Chỉ chứa THỊT (tối đa 500). Dân vác thịt nộp ở đây hoặc thành chính. Địch phá kho sẽ CƯỚP số thịt trong kho!",
+	"store_wood": "Chỉ chứa GỖ (500 — nâng cấp nhà tăng tới 1200). Dân vác gỗ nộp ở đây hoặc thành chính. Địch phá kho sẽ CƯỚP số gỗ trong kho!",
+	"store_stone": "Chỉ chứa ĐÁ (500 — nâng cấp nhà tăng tới 1200). Dân vác đá nộp ở đây hoặc thành chính. Địch phá kho sẽ CƯỚP số đá trong kho!",
+	"store_gold": "Chỉ chứa VÀNG (500 — nâng cấp nhà tăng tới 1200). Dân vác vàng nộp ở đây hoặc thành chính. Địch phá kho sẽ CƯỚP số vàng trong kho!",
+	"store_meat": "Chỉ chứa THỊT (500 — nâng cấp nhà tăng tới 1200). Dân vác thịt nộp ở đây hoặc thành chính. Địch phá kho sẽ CƯỚP số thịt trong kho!",
 	"soldier_house": "Tăng GIỚI HẠN QUÂN +6 ô. Không luyện quân — phá nhà này là quân đông bị kẹt không luyện thêm được.",
 }
 const UNIT_ART := {
@@ -93,6 +94,7 @@ var _pop_label: Label
 var _army_label: Label
 var _clock_label: Label
 var _stance_label: Label
+var _age_label: Label
 var _msg_label: Label
 var _msg_timer: float = 0.0
 
@@ -118,6 +120,15 @@ var _attack_btn: Button = null
 
 var _mm_frame: Control = null
 var _sel_label: Label = null
+
+# --- Panel CHỌN CÔNG TRÌNH (Lên Đời / Nâng cấp / Nghiên cứu quân) ---
+var _sel_panel: PanelContainer = null
+var _sel_title: Label = null
+var _sel_status: Label = null
+var _sel_box: HBoxContainer = null
+var _sel_for: Structure = null # công trình đang hiện trên panel
+var _sel_sig: String = "" # chữ ký trạng thái (cấp/đời/nghiên cứu) để dựng lại thẻ khi đổi
+var _sel_cards: Dictionary = {} # khoá hành động -> Button
 var _help_panel: PanelContainer = null
 var _end_panel: PanelContainer = null
 var _end_title: Label = null
@@ -135,6 +146,7 @@ func _ready() -> void:
 	_build_pill()
 	_build_rail()
 	_build_panel()
+	_build_sel_panel()
 	_build_minimap()
 	_build_help()
 	_build_end()
@@ -312,6 +324,10 @@ func _build_pill() -> void:
 	_clock_label.tooltip_text = "Thời gian trận"
 	_stance_label = _mk_label(_pill_row, "", 14, COL_TEXT_DARK)
 	_stance_label.tooltip_text = "Thái độ quân"
+	_pill_row.add_child(VSeparator.new())
+	# Đời hiện tại của phe — lên đời tại Thành chính (bấm chọn thành).
+	_age_label = _mk_label(_pill_row, "ĐỜI 1", 17, COL_TEXT_DARK)
+	_age_label.tooltip_text = "Đời hiện tại — bấm chọn THÀNH CHÍNH để LÊN ĐỜI (mở khoá nâng cấp nhà/quân cấp cao)"
 
 	# Dòng thông báo: nổi giữa, ngay dưới viên thuốc.
 	_msg_label = Label.new()
@@ -469,6 +485,8 @@ func is_point_over_ui(pos: Vector2) -> bool:
 	if _mm_frame != null and _mm_frame.get_global_rect().has_point(pos):
 		return true
 	if _panel.visible and _panel.get_global_rect().has_point(pos):
+		return true
+	if _sel_panel != null and _sel_panel.visible and _sel_panel.get_global_rect().has_point(pos):
 		return true
 	if _help_panel != null and _help_panel.visible and _help_panel.get_global_rect().has_point(pos):
 		return true
@@ -727,6 +745,191 @@ func _build_tab_people() -> void:
 	note.custom_minimum_size = Vector2(240, 30)
 
 # =====================================================================
+# PANEL CHỌN CÔNG TRÌNH — cùng ngôn ngữ thẻ nổi với panel tab, chiếm
+# cùng vị trí giữa-dưới (chọn công trình thì panel này thay panel tab).
+# Thành: thẻ LÊN ĐỜI + nghiên cứu NÔNG DÂN. Doanh trại: thẻ NÂNG CẤP +
+# nghiên cứu KIẾM/CUNG/GIÁO. Nhà khác: thẻ NÂNG CẤP + ích lợi theo cấp.
+# =====================================================================
+
+func _build_sel_panel() -> void:
+	_sel_panel = PanelContainer.new()
+	_sel_panel.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	_sel_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_sel_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	_sel_panel.offset_top = -8
+	_sel_panel.offset_bottom = -8
+	_sel_panel.add_theme_stylebox_override("panel", _carved_style(24, Vector4(18, 8, 18, 10)))
+	_sel_panel.visible = false
+	add_child(_sel_panel)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 4)
+	_sel_panel.add_child(vb)
+	var header := HBoxContainer.new()
+	header.add_theme_constant_override("separation", 10)
+	vb.add_child(header)
+	_sel_title = _mk_label(header, "", 15, COL_TEXT_DARK)
+	_sel_status = _mk_label(header, "", 12, COL_TEXT_DARK2)
+	_sel_box = HBoxContainer.new()
+	_sel_box.add_theme_constant_override("separation", 8)
+	vb.add_child(_sel_box)
+
+func _sel_signature(s: Structure) -> String:
+	var p := ctrl.player
+	var parts: Array = [str(s.get_instance_id()), str(p.age)]
+	if s is Castle:
+		parts.append(str(game.get_unit_level(0, "pawn")))
+	elif s is Building:
+		var b := s as Building
+		parts.append(str(b.level))
+		if b.building_type == "barracks":
+			for t in ["warrior", "archer", "lancer"]:
+				parts.append(str(game.get_unit_level(0, t)))
+	return "|".join(parts)
+
+func _upgrade_benefit_line(b: Building, to_level: int) -> String:
+	match b.building_type:
+		"house":
+			return "Dân số %d → %d" % [int(Stats.UPGRADES["house_pop"][to_level - 2]), int(Stats.UPGRADES["house_pop"][to_level - 1])]
+		"store_wood", "store_stone", "store_gold", "store_meat":
+			return "Sức chứa %d → %d" % [int(Stats.UPGRADES["store_capacity"][to_level - 2]), int(Stats.UPGRADES["store_capacity"][to_level - 1])]
+		"barracks":
+			return "Luyện nhanh hơn: -%d%% tg" % int(round((1.0 - float(Stats.UPGRADES["barracks_train_factor"][to_level - 1])) * 100.0))
+		"tower":
+			return "Tầm bắn cung: +%d%%" % int(round((float(Stats.UPGRADES["tower_range_mult"][to_level - 1]) - 1.0) * 100.0))
+		"soldier_house":
+			return "Ô quân %d → %d" % [int(Stats.UPGRADES["soldier_army_bonus"][to_level - 2]), int(Stats.UPGRADES["soldier_army_bonus"][to_level - 1])]
+	return ""
+
+func _rebuild_sel_panel(s: Structure) -> void:
+	for c in _sel_box.get_children():
+		c.queue_free()
+	_sel_cards.clear()
+	var p := ctrl.player
+	var fac := _faction()
+	if s is Castle:
+		_sel_title.text = "THÀNH CHÍNH — ĐỜI %d" % p.age
+		if p.age < int(Stats.MAX_AGE):
+			var adef: Dictionary = Stats.AGES[p.age + 1]
+			var card := _mk_card(_tex("res://assets/buildings/castle_%s.png" % fac),
+				"Lên Đời %d" % (p.age + 1),
+				"%s • %ds" % [Stats.cost_text(adef["cost"]), int(adef["time"])],
+				"Mở khoá cấp %d" % (p.age + 1),
+				"Lên Đời %d: mở khoá nâng cấp nhà cấp %d + nghiên cứu quân cấp %d. Thành đổi hình theo đời." % [p.age + 1, p.age + 1, p.age + 1])
+			card.pressed.connect(_on_age_up)
+			_sel_box.add_child(card)
+			_sel_cards["age"] = card
+		_add_research_card(s, "pawn")
+	elif s is Building:
+		var b := s as Building
+		_sel_title.text = "%s — CẤP %d" % [str(Stats.BUILDINGS[b.building_type]["label"]).to_upper(), b.level]
+		if b.level < int(Stats.MAX_LEVEL):
+			var to_lv := b.level + 1
+			var cost := Stats.building_upgrade_cost(b.building_type, to_lv)
+			var tsec := int(round(Stats.building_upgrade_time(b.building_type, to_lv)))
+			var gate := ""
+			if to_lv > p.age:
+				gate = "Cần Đời %d" % to_lv
+			var stat := _upgrade_benefit_line(b, to_lv)
+			if gate != "":
+				stat = gate
+			var card := _mk_card(_tex(BUILD_ART.get(b.building_type, BUILD_ART["house"]) % fac),
+				"Nâng cấp %d" % to_lv,
+				"%s • %ds" % [Stats.cost_text(cost), tsec],
+				stat,
+				"Nâng %s lên cấp %d: máu +%d%%, %s. Cần Đời %d." % [
+					str(Stats.BUILDINGS[b.building_type]["label"]), to_lv,
+					int(round((float(Stats.UPGRADES["building_hp_mult"][to_lv - 1]) - 1.0) * 100.0)),
+					_upgrade_benefit_line(b, to_lv), to_lv])
+			card.pressed.connect(_on_building_upgrade.bind(b))
+			_sel_box.add_child(card)
+			_sel_cards["upgrade"] = card
+		if b.building_type == "barracks":
+			for t in ["warrior", "archer", "lancer"]:
+				_add_research_card(s, t)
+
+func _add_research_card(s: Structure, unit_type: String) -> void:
+	var p := ctrl.player
+	var fac := _faction()
+	var lv: int = game.get_unit_level(0, unit_type)
+	var uname := str(Stats.UNITS[unit_type]["label"])
+	if lv >= int(Stats.MAX_LEVEL):
+		var done := _mk_card(_unit_frame_tex(UNIT_ART.get(unit_type, UNIT_ART["pawn"]) % fac, unit_type),
+			"%s" % uname, "Cấp 3", "TỐI ĐA", "%s đã ở cấp tối đa." % uname)
+		done.disabled = true
+		_sel_box.add_child(done)
+		return
+	var rdef: Dictionary = Stats.UPGRADES["unit_research"][unit_type][lv + 1]
+	var stat := "+20% máu, +15% đánh"
+	if unit_type == "pawn":
+		stat = "Vác %d, farm nhanh" % int(Stats.UPGRADES["pawn_carry"][lv])
+	if lv + 1 > p.age:
+		stat = "Cần Đời %d" % (lv + 1)
+	var card := _mk_card(_unit_frame_tex(UNIT_ART.get(unit_type, UNIT_ART["pawn"]) % fac, unit_type),
+		"%s →%d" % [uname, lv + 1],
+		"%s • %ds" % [Stats.cost_text(rdef["cost"]), int(rdef["time"])],
+		stat,
+		"Nghiên cứu %s cấp %d: áp cho MỌI %s của phe (đang sống + luyện sau). Cần Đời %d." % [uname, lv + 1, uname.to_lower(), lv + 1])
+	card.pressed.connect(_on_unit_research.bind(s, unit_type))
+	_sel_box.add_child(card)
+	_sel_cards["research:" + unit_type] = card
+
+func _on_age_up() -> void:
+	var castle := game.castles[0] as Structure
+	if castle != null and not ctrl.start_age_up(castle):
+		show_message("Chưa lên đời được (thiếu tài nguyên hoặc đang nghiên cứu việc khác).")
+
+func _on_building_upgrade(b: Building) -> void:
+	if not ctrl.start_building_upgrade(b):
+		show_message("Chưa nâng cấp được (cần đủ Đời + tài nguyên, nhà không bận nghiên cứu).")
+
+func _on_unit_research(s: Structure, unit_type: String) -> void:
+	if not ctrl.start_unit_research(s, unit_type):
+		show_message("Chưa nghiên cứu được (cần đủ Đời + tài nguyên, nơi nghiên cứu đang bận).")
+
+func _update_sel_panel() -> void:
+	var s := ctrl.get_selected_structure()
+	if s == null or s.owner_pid != 0:
+		_sel_for = null
+		_sel_sig = ""
+		_sel_panel.visible = false
+		return
+	# Panel tab đang mở thì nhường chỗ (2 panel không chồng nhau).
+	_sel_panel.visible = not _panel_open
+	if not _sel_panel.visible:
+		return
+	var sig := _sel_signature(s)
+	if s != _sel_for or sig != _sel_sig:
+		_sel_for = s
+		_sel_sig = sig
+		_rebuild_sel_panel(s)
+	# Trạng thái sống: máu + nghiên cứu đang chạy + độ mờ của thẻ.
+	var p := ctrl.player
+	var status := "Máu %d/%d" % [int(s.hp), int(s.max_hp)]
+	if s.is_researching():
+		var what := "Đang nâng cấp" if s.research_key == "upgrade" else ("Đang lên đời" if s.research_key == "age" else "Đang nghiên cứu")
+		status += " • %s — còn %ds" % [what, int(ceil(s.research_left))]
+	elif s.queue_count() > 0:
+		status += " • Hàng luyện: %d" % s.queue_count()
+	_sel_status.text = status
+	for key in _sel_cards.keys():
+		var card := _sel_cards[key] as Button
+		var enabled := true
+		if key == "age":
+			enabled = not s.is_researching() and p.can_afford(Stats.AGES[p.age + 1]["cost"])
+		elif key == "upgrade" and s is Building:
+			var b := s as Building
+			enabled = not s.is_researching() and b.level + 1 <= p.age \
+				and p.can_afford(Stats.building_upgrade_cost(b.building_type, b.level + 1))
+		elif key.begins_with("research:"):
+			var utype: String = str(key).trim_prefix("research:")
+			var lv: int = game.get_unit_level(0, utype)
+			if lv >= int(Stats.MAX_LEVEL) or lv + 1 > p.age:
+				enabled = false
+			else:
+				enabled = not s.is_researching() and p.can_afford(Stats.UPGRADES["unit_research"][utype][lv + 1]["cost"])
+		_set_btn_state(card, enabled)
+
+# =====================================================================
 # MINIMAP TRÒN — phải-dưới (mặt nạ tròn bằng shader discard, vòng viền vàng)
 # =====================================================================
 
@@ -840,8 +1043,9 @@ func _build_help() -> void:
 		"LIA CAMERA: đưa chuột ra mép màn hình, phím WASD / mũi tên, hoặc bấm vào bản đồ nhỏ.",
 		"GIAO DIỆN: dải icon bên trái mở các tab Xây / Luyện / Dân. Phím Tab thu gọn/mở rộng panel, phím 1/2/3 mở tab tương ứng.",
 		"PHÂN BỔ: nút +/- ở tab Dân chia nông dân farm gỗ/đá/vàng/thịt — phân thịt là đi SĂN CỪU (lệnh click phải ưu tiên hơn phân bổ).",
-		"XÂY: bấm thẻ công trình ở tab Xây rồi bấm vào vùng sáng quanh thành. KHO CHUYÊN DỤNG: mỗi loại tài nguyên 1 kho riêng (gỗ/đá/vàng/thịt, chứa tối đa 500), đặt được ở mọi vùng đã khám phá — dân nộp đúng loại vào kho đó hoặc thành chính. PHÁ KHO ĐỊCH = CƯỚP tài nguyên đang chứa trong kho đó! LUYỆN QUÂN: thẻ ở tab Luyện.",
+		"XÂY: bấm thẻ công trình ở tab Xây rồi bấm vào vùng sáng quanh thành. KHO CHUYÊN DỤNG: mỗi loại tài nguyên 1 kho riêng (gỗ/đá/vàng/thịt, chứa 500 (nâng cấp tăng tới 1200)), đặt được ở mọi vùng đã khám phá — dân nộp đúng loại vào kho đó hoặc thành chính. PHÁ KHO ĐỊCH = CƯỚP tài nguyên đang chứa trong kho đó! LUYỆN QUÂN: thẻ ở tab Luyện.",
 		"THÁI ĐỘ: GIỮ NHÀ (quân ở nhà thủ) / TỔNG TẤN CÔNG (đánh thành địch đã lộ diện) — ở tab Luyện.",
+		"LÊN ĐỜI & NÂNG CẤP: bấm chọn THÀNH CHÍNH để LÊN ĐỜI (Đời 2/3 mở khoá cấp nhà + cấp quân tương ứng) và nghiên cứu NÔNG DÂN; bấm chọn DOANH TRẠI để nghiên cứu KIẾM/CUNG/GIÁO; bấm chọn từng NHÀ để NÂNG CẤP nó (tăng máu + ích lợi riêng).",
 		"SƯƠNG MÙ: đen = chưa khám phá, mờ = đã qua (chỉ mờ đi, không đen lại), sáng = đang nhìn thấy.",
 	])
 	var center := CenterContainer.new()
@@ -1004,6 +1208,8 @@ func _process(delta: float) -> void:
 		_:
 			_stance_label.text = "TRINH SÁT"
 			_stance_label.add_theme_color_override("font_color", Color(0.1, 0.25, 0.55))
+	_age_label.text = "ĐỜI %d" % p.age
+	_update_sel_panel()
 	if _sel_label != null:
 		var n_sel := ctrl.get_selection().size()
 		_sel_label.text = "Đã chọn: %d" % n_sel if n_sel > 0 else ""

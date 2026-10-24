@@ -57,6 +57,62 @@ func _pick_scout() -> Unit:
 			return u
 	return null
 
+## Nhịp CÔNG NGHỆ của bot (gọi mỗi lượt quyết định, tối đa 1 hành động):
+## lên Đời khi nền kinh tế đã vững -> nghiên cứu nông dân -> nâng Doanh
+## trại -> nghiên cứu quân theo loại -> thừa tài nguyên mới nâng nhà/kho.
+## Mọi bước đều qua PlayerController như người thật và tôn trọng cổng Đời.
+func _decide_tech(castle: Castle) -> void:
+	var pid := player.pid
+	# 1) Lên Đời: đã qua mở màn (nông dân >= chỉ tiêu - 2; hàng chờ thành
+	# hay bị kiếm sĩ làm nghẽn nên nông dân tăng chậm — chờ đủ chỉ tiêu
+	# mới lên đời thì bot kẹt Đời 1 gần hết trận) + đủ trả toàn bộ giá.
+	if player.age < int(Stats.MAX_AGE) and not castle.is_researching():
+		var adef: Dictionary = Stats.AGES[player.age + 1]
+		var ready: bool = game.villager_count(pid) >= int(Stats.BOT["villager_target"]) - 2
+		if player.age >= 2:
+			ready = ready and game.army_used(pid) >= 6
+		if ready and player.can_afford(adef["cost"]):
+			ctrl.start_age_up(castle)
+			return
+	# 2) Nghiên cứu NÔNG DÂN tại Thành (khi thành rảnh nghiên cứu).
+	if not castle.is_researching():
+		var plv: int = game.get_unit_level(pid, "pawn")
+		if plv < int(Stats.MAX_LEVEL) and plv + 1 <= player.age:
+			var pdef: Dictionary = Stats.UPGRADES["unit_research"]["pawn"][plv + 1]
+			if player.can_afford(pdef["cost"]):
+				ctrl.start_unit_research(castle, "pawn")
+				return
+	var barracks: Building = game.active_barracks(pid)
+	if barracks != null:
+		# 3) Nâng cấp Doanh trại trước (luyện nhanh hơn cho cả trận).
+		if not barracks.is_researching() and barracks.level < int(Stats.MAX_LEVEL) \
+				and barracks.level + 1 <= player.age \
+				and player.can_afford(Stats.building_upgrade_cost("barracks", barracks.level + 1)):
+			ctrl.start_building_upgrade(barracks)
+			return
+		# 4) Nghiên cứu quân: loại cấp thấp nhất trước (kiếm -> cung -> giáo).
+		if not barracks.is_researching():
+			for utype in ["warrior", "archer", "lancer"]:
+				var lv: int = game.get_unit_level(pid, utype)
+				if lv < int(Stats.MAX_LEVEL) and lv + 1 <= player.age:
+					var rdef: Dictionary = Stats.UPGRADES["unit_research"][utype][lv + 1]
+					if player.can_afford(rdef["cost"]):
+						ctrl.start_unit_research(barracks, utype)
+						return
+	# 5) Thừa tài nguyên (gỗ > 600 và vàng > 250): nâng 1 nhà dân/kho cấp
+	# thấp nhất đã xây xong — tăng sức chứa/dân số cho cuối trận.
+	if int(player.resources["wood"]) > 600 and int(player.resources["gold"]) > 250:
+		var best_b: Building = null
+		for n in game.get_tree().get_nodes_in_group("buildings"):
+			var b := n as Building
+			if b.owner_pid == pid and b.constructed and b.is_alive() and not b.is_researching() \
+					and b.building_type != "barracks" \
+					and b.level < int(Stats.MAX_LEVEL) and b.level + 1 <= player.age:
+				if best_b == null or b.level < best_b.level:
+					best_b = b
+		if best_b != null and player.can_afford(Stats.building_upgrade_cost(best_b.building_type, best_b.level + 1)):
+			ctrl.start_building_upgrade(best_b)
+
 func _decide() -> void:
 	var castle: Castle = game.castles[player.pid]
 	if castle == null:
@@ -146,6 +202,11 @@ func _decide() -> void:
 			ctrl.queue_training(barracks, "archer")
 	elif castle.queue_count() < 3:
 		ctrl.queue_training(castle, "warrior")
+
+	# 4.5) Công nghệ: LÊN ĐỜI + nghiên cứu quân + nâng cấp nhà — chỉ làm
+	# khi KINH TẾ CHO PHÉP (đủ trả toàn bộ giá, không vay mượn nhịp xây/
+	# luyện ở trên) để bot không bao giờ kẹt vì chờ đời.
+	_decide_tech(castle)
 
 	# 5) Trinh sát + tấn công (không làm khi đang bị uy hiếp).
 	if _threatened:
