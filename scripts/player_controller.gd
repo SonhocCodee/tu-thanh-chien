@@ -23,10 +23,10 @@ func setup(p_player: PlayerState, p_game: Node) -> void:
 	player = p_player
 	game = p_game
 
-func set_villager_allocation(wood: int, stone: int, gold: int) -> bool:
+func set_villager_allocation(wood: int, stone: int, gold: int, meat: int = 0) -> bool:
 	if player == null or not player.alive:
 		return false
-	return game.exec_set_allocation(player, maxi(0, wood), maxi(0, stone), maxi(0, gold))
+	return game.exec_set_allocation(player, maxi(0, wood), maxi(0, stone), maxi(0, gold), maxi(0, meat))
 
 func place_building(building_type: String, position: Vector2) -> bool:
 	if player == null or not player.alive:

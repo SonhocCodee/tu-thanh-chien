@@ -3,8 +3,11 @@ extends Node2D
 
 ## Nông dân (Pawn): theo phân bổ của chủ, tự chạy tới điểm tài nguyên GẦN NHẤT
 ## thuộc loại được phân VÀ đã được phe mình khám phá; khai thác (có hoạt ảnh +
-## thời gian), chất đầy tải thì mang về thành chính, cộng tài nguyên, lặp lại.
-## Hết phân bổ -> chờ gần thành, nhận phân bổ mới thì đi tiếp.
+## thời gian), chất đầy tải thì VÁC VỀ KHO (thành chính hoặc Nhà Kho gần nhất),
+## TỚI KHO MỚI ĐƯỢC CỘNG tài nguyên, lặp lại.
+## M2 giai đoạn 2: tài nguyên HỮU HẠN (khai thác trừ trữ lượng của điểm);
+## phân bổ "meat" = đi SĂN CỪU (dao) / xẻ xác thịt. Hết phân bổ -> chờ gần
+## thành, nhận phân bổ mới thì đi tiếp.
 
 const FRAME := 192.0
 
@@ -15,7 +18,7 @@ var hp: float = 0.0
 var main_ref: Node = null
 var idle_offset: Vector2 = Vector2.ZERO
 
-var assigned: String = "" # "" | "wood" | "stone" | "gold"
+var assigned: String = "" # "" | "wood" | "stone" | "gold" | "meat"
 var carrying_type: String = ""
 var carrying: int = 0
 
@@ -29,8 +32,10 @@ var direct_res: String = ""
 var move_point: Vector2 = Vector2.ZERO
 var holding: bool = false
 
-var _state: String = "idle" # idle | to_node | harvest | return | move_to | hold
+var _state: String = "idle" # idle | to_node | to_sheep | hunt | harvest | return | move_to | hold
 var _node: Node2D = null
+var _sheep: Sheep = null
+var _dropoff: Node2D = null # kho đang hướng về (thành chính / Nhà Kho) — test đọc được
 var _harvest_left: float = 0.0
 var _anim: AnimatedSprite2D
 var _cur_anim: String = ""
@@ -59,8 +64,10 @@ func _build_frames() -> SpriteFrames:
 	_add_anim(sf, "run", base + "pawn_run.png", 6, 10.0)
 	_add_anim(sf, "run_wood", base + "pawn_run_wood.png", 6, 10.0)
 	_add_anim(sf, "run_gold", base + "pawn_run_gold.png", 6, 10.0)
+	_add_anim(sf, "run_meat", base + "pawn_run_meat.png", 6, 10.0)
 	_add_anim(sf, "axe", base + "pawn_axe.png", 6, 10.0)
 	_add_anim(sf, "pick", base + "pawn_pick.png", 6, 10.0)
+	_add_anim(sf, "knife", base + "pawn_knife.png", 4, 10.0)
 	return sf
 
 func _add_anim(sf: SpriteFrames, anim_name: String, tex_path: String, frames: int, fps: float) -> void:
@@ -85,11 +92,35 @@ func is_alive() -> bool:
 func is_direct() -> bool:
 	return direct
 
+func carry_anim() -> String:
+	# Đang vác gì thì hiện đúng hoạt ảnh vác loại đó.
+	match carrying_type:
+		"wood":
+			return "run_wood"
+		"gold", "stone":
+			return "run_gold"
+		"meat":
+			return "run_meat"
+	return "run"
+
+func harvest_anim() -> String:
+	# Gỗ = rìu, đá/vàng = cuốc chim ĐÀO, thịt = dao xẻ.
+	match assigned:
+		"wood":
+			return "axe"
+		"meat":
+			return "knife"
+	return "pick"
+
 func set_direct(node: Node2D) -> void:
+	holding = false
+	if node is Sheep:
+		set_direct_sheep(node as Sheep)
+		return
 	direct = true
 	direct_node = node
 	direct_res = (node as ResourceNode).res_type
-	holding = false
+	_sheep = null
 	assigned = direct_res
 	_node = node
 	if carrying > 0:
@@ -97,11 +128,25 @@ func set_direct(node: Node2D) -> void:
 	else:
 		_state = "to_node"
 
+func set_direct_sheep(sheep: Sheep) -> void:
+	direct = true
+	direct_node = null
+	direct_res = "meat"
+	holding = false
+	assigned = "meat"
+	_sheep = sheep
+	_node = null
+	if carrying > 0:
+		_state = "return"
+	else:
+		_state = "to_sheep"
+
 func set_move_point(point: Vector2) -> void:
 	direct = false
 	direct_node = null
 	direct_res = ""
 	holding = false
+	_sheep = null
 	move_point = point
 	_state = "move_to"
 	_node = null
@@ -114,6 +159,7 @@ func set_assignment(res_key: String) -> void:
 	direct_node = null
 	direct_res = ""
 	holding = false
+	_sheep = null
 	if assigned == res_key and _state != "hold" and _state != "move_to":
 		return
 	assigned = res_key
@@ -125,6 +171,25 @@ func set_assignment(res_key: String) -> void:
 	else:
 		_state = "to_node"
 		_node = null
+
+func _end_direct() -> void:
+	# Mục tiêu trực tiếp biến mất/cạn -> hết lệnh, quay lại phân bổ.
+	direct = false
+	direct_node = null
+	direct_res = ""
+	_sheep = null
+	assigned = ""
+	_state = "idle"
+	_node = null
+	if main_ref != null:
+		main_ref.rebalance_player(owner_pid)
+
+func _node_gone(n: Variant) -> bool:
+	# Tham số KHÔNG typed: node đã freed truyền vào tham số typed Node2D sẽ
+	# gây lỗi runtime trước khi thân hàm chạy (dân kẹt vĩnh viễn).
+	if n == null or not is_instance_valid(n):
+		return true
+	return (n as ResourceNode).is_depleted()
 
 func _process(delta: float) -> void:
 	if main_ref == null or main_ref.match_over:
@@ -155,59 +220,139 @@ func _process(delta: float) -> void:
 		"hold":
 			_play("idle")
 		"to_node":
-			if assigned == "":
-				_state = "idle"
-			else:
-				if direct and _node == null and direct_node != null and is_instance_valid(direct_node):
-					_node = direct_node
-				if _node == null or not is_instance_valid(_node):
-					if direct:
-						# Mỏ trực tiếp biến mất -> hết lệnh, quay lại phân bổ.
-						direct = false
-						direct_node = null
-						direct_res = ""
-						assigned = ""
-						_state = "idle"
-						if main_ref != null:
-							main_ref.rebalance_player(owner_pid)
-						return
-					_node = main_ref.nearest_resource_node(owner_pid, assigned, global_position)
-				if _node == null:
-					# Chưa khám phá thấy điểm tài nguyên loại này -> chờ gần thành.
-					var spot2: Vector2 = castle.global_position + idle_offset
-					if global_position.distance_to(spot2) > 10.0:
-						_move_toward(spot2, delta, "run")
-					else:
-						_play("idle")
-				elif global_position.distance_to(_node.global_position) <= 30.0:
-					_state = "harvest"
-					_harvest_left = float(st["harvest_time"])
-					_face(_node.global_position)
-				else:
-					_move_toward(_node.global_position, delta, "run")
+			_step_to_node(delta, castle)
+		"to_sheep":
+			_step_to_sheep(delta)
+		"hunt":
+			_step_hunt(delta)
 		"harvest":
-			_play("axe" if assigned == "wood" else "pick")
-			_harvest_left -= delta
-			if _harvest_left <= 0.0:
-				carrying = int(st["carry_capacity"])
-				carrying_type = assigned
-				_state = "return"
+			_step_harvest(delta)
 		"return":
-			if global_position.distance_to(castle.global_position) <= 58.0:
-				if carrying > 0:
-					main_ref.get_player(owner_pid).add_resource(carrying_type, carrying)
-					carrying = 0
-					carrying_type = ""
-				_state = "to_node" if assigned != "" else "idle"
-				if not direct:
-					_node = null
-			else:
-				var anim := "run"
-				if carrying_type == "wood":
-					anim = "run_wood"
-				elif carrying_type == "gold" or carrying_type == "stone":
-					anim = "run_gold"
-				_move_toward(castle.global_position, delta, anim)
+			_step_return(delta, castle)
+
+func _step_to_node(delta: float, castle: Castle) -> void:
+	if assigned == "":
+		_state = "idle"
+		return
+	# Mục tiêu trực tiếp: node tài nguyên hoặc cừu.
+	if direct:
+		if direct_node != null:
+			if _node_gone(direct_node):
+				_end_direct()
+				return
+			_node = direct_node
+		elif _sheep != null and is_instance_valid(_sheep) and _sheep.alive:
+			_state = "to_sheep"
+			return
+		elif direct_res == "meat":
+			# Cừu trực tiếp đã chết (thợ khác giết) -> xẻ xác của nó nếu còn.
+			_node = main_ref.nearest_resource_node(owner_pid, "meat", global_position)
+			if _node == null:
+				_end_direct()
+				return
+		else:
+			_end_direct()
+			return
+	# Hết mục tiêu hiện tại -> tìm điểm gần nhất còn trữ lượng.
+	if _node_gone(_node):
+		_node = main_ref.nearest_resource_node(owner_pid, assigned, global_position)
+	# Phân bổ thịt mà không có xác nào -> đi săn cừu còn sống đã khám phá.
+	if _node == null and assigned == "meat":
+		_sheep = main_ref.nearest_sheep(owner_pid, global_position)
+		if _sheep != null:
+			_state = "to_sheep"
+			return
+	if _node == null:
+		# Chưa khám phá thấy điểm tài nguyên loại này -> chờ gần thành.
+		var spot: Vector2 = castle.global_position + idle_offset
+		if global_position.distance_to(spot) > 10.0:
+			_move_toward(spot, delta, "run")
+		else:
+			_play("idle")
+	elif global_position.distance_to(_node.global_position) <= 34.0:
+		_state = "harvest"
+		_harvest_left = float(st["harvest_time"])
+		_face(_node.global_position)
+	else:
+		_move_toward(_node.global_position, delta, "run")
+
+func _step_to_sheep(delta: float) -> void:
+	if _sheep == null or not is_instance_valid(_sheep) or not _sheep.alive:
+		_sheep = null
+		_node = null
+		_state = "to_node"
+		return
+	if global_position.distance_to(_sheep.global_position) <= 30.0:
+		_state = "hunt"
+		_harvest_left = float(st["harvest_time"])
+		_face(_sheep.global_position)
+	else:
+		_move_toward(_sheep.global_position, delta, "run")
+
+func _step_hunt(delta: float) -> void:
+	if _sheep == null or not is_instance_valid(_sheep) or not _sheep.alive:
+		_sheep = null
+		_node = null
+		_state = "to_node"
+		return
+	if global_position.distance_to(_sheep.global_position) > 42.0:
+		_state = "to_sheep" # cừu chạy xa giữa lúc săn -> đuổi tiếp
+		return
+	_play("knife")
+	_face(_sheep.global_position)
+	_harvest_left -= delta
+	if _harvest_left <= 0.0:
+		# Giết cừu -> xác thịt xuất hiện tại chỗ, chuyển sang xẻ thịt ở xác.
+		var carcass: ResourceNode = main_ref.kill_sheep(_sheep)
+		_sheep = null
+		if carcass != null:
+			_node = carcass
+			_state = "harvest"
+			_harvest_left = float(st["harvest_time"])
+			if direct:
+				direct_node = carcass
+		else:
+			_state = "to_node"
+			_node = null
+
+func _step_harvest(delta: float) -> void:
+	if _node_gone(_node):
+		_node = null
+		_state = "to_node"
+		return
+	_play(harvest_anim())
+	_face(_node.global_position)
+	_harvest_left -= delta
+	if _harvest_left <= 0.0:
+		var take: int = (_node as ResourceNode).take_harvest(int(st["carry_capacity"]))
+		if take > 0:
+			carrying = take
+			carrying_type = (_node as ResourceNode).res_type
+			_dropoff = null
+			_state = "return"
+		else:
+			_node = null
+			_state = "to_node"
+
+func _step_return(delta: float, castle: Castle) -> void:
+	# Kho đích = thành chính hoặc Nhà Kho (đã xây xong, còn đứng) GẦN NHẤT.
+	# Kho bị phá giữa đường -> tính lại kho khác.
+	if _dropoff == null or not is_instance_valid(_dropoff) or (_dropoff is Building and not (_dropoff as Building).is_valid_dropoff()):
+		_dropoff = main_ref.nearest_dropoff(owner_pid, global_position)
+	if _dropoff == null:
+		_dropoff = castle
+	var reach := 58.0 if _dropoff is Castle else 52.0
+	if global_position.distance_to(_dropoff.global_position) <= reach:
+		# CHỈ khi về TỚI KHO mới cộng tài nguyên.
+		if carrying > 0:
+			main_ref.get_player(owner_pid).add_resource(carrying_type, carrying)
+			carrying = 0
+			carrying_type = ""
+		_state = "to_node" if assigned != "" else "idle"
+		if not direct:
+			_node = null
+	else:
+		_move_toward(_dropoff.global_position, delta, carry_anim())
 
 func _move_toward(to: Vector2, delta: float, anim_name: String) -> void:
 	var dir := to - global_position

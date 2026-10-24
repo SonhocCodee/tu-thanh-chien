@@ -37,9 +37,9 @@ func _ready() -> void:
 	top.size = Vector2(1280, 38)
 	add_child(top)
 	_res_label = _mk_label(top, Vector2(12, 8), 18)
-	_pop_label = _mk_label(top, Vector2(360, 8), 18)
-	_clock_label = _mk_label(top, Vector2(520, 8), 18)
-	_stance_label = _mk_label(top, Vector2(700, 8), 18)
+	_pop_label = _mk_label(top, Vector2(490, 8), 18)
+	_clock_label = _mk_label(top, Vector2(660, 8), 18)
+	_stance_label = _mk_label(top, Vector2(840, 8), 18)
 	_msg_label = _mk_label(top, Vector2(12, 40), 16)
 	_msg_label.add_theme_color_override("font_color", Color(1, 0.9, 0.4))
 	_msg_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
@@ -80,11 +80,11 @@ func _ready() -> void:
 		"KÉO CHUỘT TRÁI: chọn quân trong khung (vòng xanh = đã chọn).",
 		"CLICK TRÁI 1 đơn vị: chọn riêng nó. Bấm đất trống / quân địch: bỏ chọn.",
 		"CLICK PHẢI ĐẤT TRỐNG: quân đã chọn di chuyển tới đó.",
-		"CLICK PHẢI CÂY/MỎ: nông dân đã chọn đi farm đúng loại đó.",
+		"CLICK PHẢI CÂY/MỎ: nông dân đã chọn đi farm đúng loại đó. CLICK PHẢI CỪU: nông dân đi săn lấy thịt.",
 		"CLICK PHẢI QUÂN/CÔNG TRÌNH ĐỊCH: tấn công (chỉ mục tiêu đã lộ diện — chưa lộ thì game từ chối, cần trinh sát trước).",
 		"LIA CAMERA: đưa chuột ra mép màn hình, phím WASD / mũi tên, hoặc bấm vào bản đồ nhỏ.",
-		"PHÂN BỔ: nút +/- chia nông dân farm gỗ/đá/vàng (lệnh click phải ưu tiên hơn phân bổ).",
-		"XÂY: bấm nút công trình rồi bấm vào vùng sáng quanh thành. LUYỆN QUÂN: nút ở thành/doanh trại.",
+		"PHÂN BỔ: nút +/- chia nông dân farm gỗ/đá/vàng/thịt — phân thịt là đi SĂN CỪU (lệnh click phải ưu tiên hơn phân bổ).",
+		"XÂY: bấm nút công trình rồi bấm vào vùng sáng quanh thành. NHÀ KHO: điểm giao tài nguyên, đặt được ở mọi vùng đã khám phá. LUYỆN QUÂN: nút ở thành/doanh trại.",
 		"THÁI ĐỘ: GIỮ NHÀ (quân ở nhà thủ) / TỔNG TẤN CÔNG (đánh thành địch đã lộ diện).",
 		"SƯƠNG MÙ: đen = chưa khám phá, mờ = đã qua (chỉ mờ đi, không đen lại), sáng = đang nhìn thấy.",
 	])
@@ -98,15 +98,15 @@ func _ready() -> void:
 	add_child(bottom)
 	_mk_title(bottom, Vector2(12, 4), "Phân bổ nông dân")
 	_villager_label = _mk_label(bottom, Vector2(12, 84), 13)
-	var res_keys := ["wood", "stone", "gold"]
-	for i in 3:
-		var x := 12 + i * 96
+	var res_keys := ["wood", "stone", "gold", "meat"]
+	for i in 4:
+		var x := 12 + i * 74
 		var key: String = res_keys[i]
 		var name_lbl := _mk_label(bottom, Vector2(x, 26), 14)
 		name_lbl.text = Stats.RES_LABELS[key]
-		var minus := _mk_button(bottom, Vector2(x, 48), Vector2(26, 26), "-")
-		var count := _mk_label(bottom, Vector2(x + 30, 50), 16)
-		var plus := _mk_button(bottom, Vector2(x + 58, 48), Vector2(26, 26), "+")
+		var minus := _mk_button(bottom, Vector2(x, 48), Vector2(22, 26), "-")
+		var count := _mk_label(bottom, Vector2(x + 25, 50), 16)
+		var plus := _mk_button(bottom, Vector2(x + 47, 48), Vector2(22, 26), "+")
 		_alloc_labels[key] = count
 		_alloc_minus[key] = minus
 		_alloc_plus[key] = plus
@@ -117,7 +117,8 @@ func _ready() -> void:
 	for i in Stats.BUILDINGS.keys().size():
 		var btype: String = Stats.BUILDINGS.keys()[i]
 		var def: Dictionary = Stats.BUILDINGS[btype]
-		var btn := _mk_button(bottom, Vector2(312 + i * 108, 26), Vector2(102, 56), "%s\n%s" % [def["label"], Stats.cost_text(def["cost"])])
+		var btn := _mk_button(bottom, Vector2(312 + (i % 3) * 108, 24 + (i / 3) * 40), Vector2(102, 36), "%s\n%s" % [def["label"], Stats.cost_text(def["cost"])])
+		btn.add_theme_font_size_override("font_size", 11)
 		btn.pressed.connect(_on_build.bind(btype))
 		_build_buttons[btype] = btn
 
@@ -133,7 +134,7 @@ func _ready() -> void:
 	_train_barracks_buttons["archer"] = _mk_button(bottom, Vector2(834, 54), Vector2(88, 24), "Cung thủ")
 	_barracks_queue_label = _mk_label(bottom, Vector2(928, 58), 12)
 	var cost_hint := _mk_label(bottom, Vector2(648, 86), 11)
-	cost_hint.text = "Giá: Nông dân 50 vàng • Kiếm sĩ 80 vàng • Cung thủ 70 vàng + 30 gỗ"
+	cost_hint.text = "Giá: Nông dân 50 thịt • Kiếm sĩ 80 vàng • Cung thủ 70 vàng + 30 gỗ"
 	(_train_castle_buttons["pawn"] as Button).pressed.connect(func() -> void: ctrl.queue_training(game.castles[0], "pawn"))
 	(_train_castle_buttons["warrior"] as Button).pressed.connect(func() -> void: ctrl.queue_training(game.castles[0], "warrior"))
 	(_train_barracks_buttons["warrior"] as Button).pressed.connect(func() -> void: ctrl.queue_training(game.active_barracks(0), "warrior"))
@@ -193,9 +194,9 @@ func close_help() -> void:
 
 func _on_alloc(res_key: String, delta_sign: int) -> void:
 	var p := ctrl.player
-	var a := {"wood": int(p.allocation["wood"]), "stone": int(p.allocation["stone"]), "gold": int(p.allocation["gold"])}
+	var a := {"wood": int(p.allocation["wood"]), "stone": int(p.allocation["stone"]), "gold": int(p.allocation["gold"]), "meat": int(p.allocation["meat"])}
 	a[res_key] = maxi(0, int(a[res_key]) + delta_sign)
-	ctrl.set_villager_allocation(a["wood"], a["stone"], a["gold"])
+	ctrl.set_villager_allocation(a["wood"], a["stone"], a["gold"], a["meat"])
 
 func _on_build(btype: String) -> void:
 	game.set_placement_mode(btype)
@@ -208,7 +209,7 @@ func _process(delta: float) -> void:
 		if _msg_timer <= 0.0:
 			_msg_label.text = ""
 	var p := ctrl.player
-	_res_label.text = "Gỗ: %d    Đá: %d    Vàng: %d" % [int(p.resources["wood"]), int(p.resources["stone"]), int(p.resources["gold"])]
+	_res_label.text = "Gỗ: %d    Đá: %d    Vàng: %d    Thịt: %d" % [int(p.resources["wood"]), int(p.resources["stone"]), int(p.resources["gold"]), int(p.resources["meat"])]
 	_pop_label.text = "Dân số: %d/%d" % [game.pop_used(0), game.pop_cap(0)]
 	if _sel_label != null:
 		var n_sel := ctrl.get_selection().size()

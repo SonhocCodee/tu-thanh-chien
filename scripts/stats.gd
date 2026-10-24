@@ -45,8 +45,10 @@ const UNITS := {
 }
 
 # --- Huấn luyện: giá tài nguyên + thời gian, theo từng đơn vị ---
+# M2 giai đoạn 2: nông dân tốn THỊT (săn cừu) thay cho 50 vàng như M1;
+# quân vẫn tốn vàng/gỗ như cũ.
 const TRAINING := {
-	"pawn": {"cost": {"gold": 50}, "time": 6.0},
+	"pawn": {"cost": {"meat": 50}, "time": 6.0},
 	"warrior": {"cost": {"gold": 80}, "time": 9.0},
 	"archer": {"cost": {"gold": 70, "wood": 30}, "time": 11.0},
 }
@@ -83,6 +85,16 @@ const BUILDINGS := {
 		"tower_cooldown": 1.1,
 		"projectile_speed": 470.0,
 	},
+	# Nhà Kho: điểm giao tài nguyên (drop-off) phụ cạnh thành chính — nhận MỌI
+	# tài nguyên kể cả vàng. Không sản xuất, không cộng dân số. Đặt được ở mọi
+	# vùng ĐÃ KHÁM PHÁ (không giới hạn vùng căn cứ) để kê gần bãi farm.
+	"storehouse": {
+		"label": "Nhà Kho",
+		"cost": {"wood": 80},
+		"build_time": 10.0,
+		"hp": 300.0,
+		"radius": 40.0,
+	},
 }
 
 # --- Thành chính ---
@@ -97,11 +109,32 @@ const CASTLE := {
 
 # --- Kinh tế / dân số ---
 const ECONOMY := {
-	"start_resources": {"wood": 200, "stone": 150, "gold": 200},
+	"start_resources": {"wood": 200, "stone": 150, "gold": 200, "meat": 100},
 	"start_villagers": 3,
 	"pop_base": 10,
 	"pop_per_house": 8,
 }
+
+# --- Tài nguyên HỮU HẠN (M2 giai đoạn 2): trữ lượng từng điểm trên map ---
+# Đơn vị = đúng đơn vị tài nguyên; mỗi chuyến nông dân vác tối đa
+# UNITS.pawn.carry_capacity (10). Cạn -> cây đổ còn gốc, mỏ biến mất.
+const NODE_AMOUNTS := {
+	"wood": {"small": 300, "big": 900},
+	"stone": {"small": 240, "big": 720},
+	"gold": {"small": 300, "big": 1000},
+}
+
+# --- Cừu trung lập: nguồn thịt ---
+const SHEEP := {
+	"hp": 25.0,
+	"meat": 100, # thịt trong 1 xác cừu
+	"speed": 22.0,
+	"wander_radius": 85.0,
+}
+
+# Thời gian đống đổ nát của mỏ vàng lớn nằm lại trên map sau khi cạn
+# (hiện sprite GoldMine_Destroyed) trước khi biến mất hẳn.
+const GOLDMINE_RUBBLE_TIME := 6.0
 
 # --- Quân sự ---
 const MILITARY := {
@@ -130,8 +163,8 @@ const BOT := {
 	"threat_radius": 290.0,
 }
 
-const RES_KEYS: Array[String] = ["wood", "stone", "gold"]
-const RES_LABELS := {"wood": "Gỗ", "stone": "Đá", "gold": "Vàng"}
+const RES_KEYS: Array[String] = ["wood", "stone", "gold", "meat"]
+const RES_LABELS := {"wood": "Gỗ", "stone": "Đá", "gold": "Vàng", "meat": "Thịt"}
 
 # --- Người chơi ---
 # skill_id / skill_cooldown: kỹ năng thành để sẵn dữ liệu (chưa kích hoạt ở mốc này).

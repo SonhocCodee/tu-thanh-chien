@@ -10,8 +10,8 @@ var color_key: String = "blue"
 var is_bot: bool = false
 var alive: bool = true
 
-var resources: Dictionary = {"wood": 0, "stone": 0, "gold": 0}
-var allocation: Dictionary = {"wood": 0, "stone": 0, "gold": 0} # số nông dân mong muốn theo việc
+var resources: Dictionary = {"wood": 0, "stone": 0, "gold": 0, "meat": 0}
+var allocation: Dictionary = {"wood": 0, "stone": 0, "gold": 0, "meat": 0} # số nông dân mong muốn theo việc
 var stance: String = "hold" # "hold" = giữ nhà | "attack" = tổng tấn công | "move" = đi tới điểm (trinh sát)
 var target_pid: int = -1
 var move_point: Vector2 = Vector2.ZERO

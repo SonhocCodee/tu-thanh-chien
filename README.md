@@ -28,5 +28,12 @@ thành địch và tổng tấn công. Phá thành chính của cả 3 phe đị
 - Sương mù là dữ liệu riêng từng phe: `scripts/fog.gd` (lưới ô 3 trạng thái, cập nhật mỗi 0,25s).
 
 ## Kiểm chứng
-- Test tự động: `godot --headless --script tests/test_battle.gd` (8 mục M1: khai thác, xây nhà tăng dân số, huấn luyện trừ đúng tài nguyên + chặn dân số, tổng tấn công phá thành sau trinh sát, bot trọn trận, 3 mục sương mù) và `godot --headless --script tests/test_m2.gd` (8 mục M2: khung chọn, click phải di chuyển, click phải farm + về phân bổ, tấn công địch chưa lộ diện bị từ chối, camera kẹp biên, trận bot trên map lớn, thành xa nhau + sương mù chỉ mờ, lệnh trực tiếp ưu tiên hơn phân bổ).
-- Ảnh kiểm chứng: thư mục `screenshots/` (`m2_*.png` chụp bằng chế độ `-- --m2demo`).
+- Test tự động: `godot --headless --script tests/test_battle.gd` (8 mục M1: khai thác, xây nhà tăng dân số, huấn luyện trừ đúng tài nguyên + chặn dân số, tổng tấn công phá thành sau trinh sát, bot trọn trận, 3 mục sương mù), `godot --headless --script tests/test_m2.gd` (8 mục M2 giai đoạn 1: khung chọn, click phải di chuyển, click phải farm + về phân bổ, tấn công địch chưa lộ diện bị từ chối, camera kẹp biên, trận bot trên map lớn, thành xa nhau + sương mù chỉ mờ, lệnh trực tiếp ưu tiên hơn phân bổ) và `godot --headless --script tests/test_g2.gd` (6 mục M2 giai đoạn 2: cây cạn còn gốc, mỏ cạn biến mất/mỏ lớn Destroyed, thịt chỉ cộng sau khi vác về kho, phá nhà địch không cho vàng, Nhà Kho là điểm giao gần nhất, bot trọn trận trên hệ tài nguyên mới).
+- Ảnh kiểm chứng: thư mục `screenshots/` (`m2_*.png` chụp bằng chế độ `-- --m2demo`, `g2_*.png` bằng `-- --g2demo`).
+
+## M2 giai đoạn 2 — tài nguyên kiểu đế chế
+- Tài nguyên HỮU HẠN: cây nhỏ/lớn 300/900 gỗ, đá 240/720, quặng vàng 300, mỏ vàng lớn 1000. Cây cạn -> đổ, còn GỐC; đá/quặng cạn -> biến mất; mỏ lớn cạn -> đống đổ nát (GoldMine_Destroyed) 6s rồi biến mất.
+- Cừu trung lập lang thang = nguồn THỊT (100 thịt/xác): nông dân săn bằng dao, xẻ thịt ở xác, vác về kho. Nông dân huấn luyện bằng 50 THỊT (thay 50 vàng của M1); quân vẫn vàng/gỗ.
+- KHO (drop-off) bắt buộc: tài nguyên chỉ cộng khi vác về tới thành chính hoặc NHÀ KHO (80 gỗ, xây 10s, đặt ở mọi vùng đã khám phá). Dân vác hiện đúng hoạt ảnh theo loại hàng (gỗ/vàng/thịt).
+- Sprite theo ASSETS.md: đá = Rock1/2 xám (bỏ stone.png cũ là icon thịt), vàng nhỏ = quặng Gold Stone, mỏ lớn = bộ GoldMine 3 trạng thái.
+- Bot dùng hệ mới: phân bổ thợ săn thịt, xây Nhà Kho, trinh sát bằng 1 quân (đạo quân ở nhà chờ đủ 8 mới tổng tấn công).

@@ -47,6 +47,12 @@ func _ready() -> void:
 			_tex_normal = load("res://assets/buildings/tower_%s.png" % color_key)
 			_tex_destroyed = load("res://assets/buildings/tower_destroyed.png")
 			_tex_construction = load("res://assets/buildings/tower_construction.png")
+		"storehouse":
+			# Nhà Kho: sprite House2 của Free Pack theo màu phe (ASSETS.md §5);
+			# đang xây / tàn tích dùng chung bộ của nhà dân.
+			_tex_normal = load("res://assets/buildings/storehouse_%s.png" % color_key)
+			_tex_destroyed = load("res://assets/buildings/house_destroyed.png")
+			_tex_construction = load("res://assets/buildings/house_construction.png")
 	_sprite = Sprite2D.new()
 	match building_type:
 		"house":
@@ -58,6 +64,9 @@ func _ready() -> void:
 		"tower":
 			_sprite.scale = Vector2(0.45, 0.45)
 			_sprite.position = Vector2(0, -52)
+		"storehouse":
+			_sprite.scale = Vector2(0.6, 0.6)
+			_sprite.position = Vector2(0, -30)
 	add_child(_sprite)
 	_make_fire()
 	_refresh_display()
@@ -84,6 +93,10 @@ func _refresh_display() -> void:
 
 func can_produce() -> bool:
 	return super.can_produce() and constructed
+
+## Nhà Kho dùng được làm điểm giao tài nguyên khi đã xây xong và còn đứng.
+func is_valid_dropoff() -> bool:
+	return building_type == "storehouse" and constructed and is_alive()
 
 func _process(delta: float) -> void:
 	_update_fire()

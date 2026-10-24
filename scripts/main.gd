@@ -51,6 +51,14 @@ var _demo_show_drag: bool = false
 var m2demo_mode: bool = false
 var _m2demo_stage: int = 0
 var _m2demo_timer: float = 0.0
+var g2demo_mode: bool = false
+var _g2demo_stage: int = 0
+var _g2demo_timer: float = 0.0
+var _g2_tree: ResourceNode = null
+var _g2_hunter: Villager = null
+var _g2_store: Building = null
+var _g2_mine: ResourceNode = null
+var _g2_scout_sent: bool = false
 
 var _rng := RandomNumberGenerator.new()
 var _fog_timer: float = 0.0
@@ -73,9 +81,14 @@ func _ready() -> void:
 		m2demo_mode = true
 		bots_enabled = false
 		Engine.time_scale = 3.0
+	if "--g2demo" in args:
+		g2demo_mode = true
+		bots_enabled = false
+		Engine.time_scale = 3.0
 	_build_players()
 	_build_map()
 	_build_resource_nodes()
+	_build_sheep()
 	_build_castles()
 	_build_start_villagers()
 	_build_fog()
@@ -100,6 +113,8 @@ func _process(delta: float) -> void:
 		_demo_update()
 	if m2demo_mode:
 		_demo_m2_update(delta)
+	if g2demo_mode:
+		_demo_g2_update(delta)
 
 # ===================== DỰNG BAN ĐẦU =====================
 
@@ -195,28 +210,129 @@ func _build_map() -> void:
 	add_child(_sel_overlay)
 
 func _build_resource_nodes() -> void:
+	var variant_counter := 0
 	for pid in CASTLE_POS.keys():
 		var c: Vector2 = CASTLE_POS[pid]
 		var mx := 1.0 if c.x < WORLD.x / 2.0 else -1.0
 		var my := 1.0 if c.y < WORLD.y / 2.0 else -1.0
-		_add_node("wood", false, c + Vector2(mx * 150, -45))
-		_add_node("wood", false, c + Vector2(mx * 150, 45))
-		_add_node("wood", false, c + Vector2(mx * 95, my * 105))
-		_add_node("stone", false, c + Vector2(mx * 205, my * 55))
-		_add_node("gold", false, c + Vector2(mx * 205, -my * 55))
+		_add_node("wood", false, c + Vector2(mx * 150, -45), variant_counter)
+		variant_counter += 1
+		_add_node("wood", false, c + Vector2(mx * 150, 45), variant_counter)
+		variant_counter += 1
+		_add_node("wood", false, c + Vector2(mx * 95, my * 105), variant_counter)
+		variant_counter += 1
+		_add_node("stone", false, c + Vector2(mx * 205, my * 55), pid)
+		_add_node("gold", false, c + Vector2(mx * 205, -my * 55), pid)
 	# Điểm tài nguyên LỚN giữa map — nằm trong vùng tối đầu trận, phải trinh sát.
-	_add_node("gold", true, Vector2(960, 460))
-	_add_node("wood", true, Vector2(900, 155))
-	_add_node("wood", true, Vector2(1020, 155))
-	_add_node("stone", true, Vector2(920, 765))
-	_add_node("stone", true, Vector2(1010, 765))
+	_add_node("gold", true, Vector2(960, 460), 0)
+	_add_node("wood", true, Vector2(900, 155), 1)
+	_add_node("wood", true, Vector2(1020, 155), 2)
+	_add_node("stone", true, Vector2(920, 765), 0)
+	_add_node("stone", true, Vector2(1010, 765), 1)
 
-func _add_node(res_type: String, big: bool, pos: Vector2) -> void:
+func _add_node(res_type: String, big: bool, pos: Vector2, variant: int = 0) -> ResourceNode:
 	var n := ResourceNode.new()
-	n.setup(res_type, big)
+	n.setup(res_type, big, variant)
 	n.position = pos
 	n.z_index = -4
 	add_child(n)
+	return n
+
+# ===================== CỪU TRUNG LẬP (nguồn thịt) =====================
+
+func _build_sheep() -> void:
+	var seed_val := 1000
+	# Mỗi căn cứ: 2 cừu trong tầm nhìn thành (săn được ngay đầu trận) + 1 xa hơn.
+	for pid in CASTLE_POS.keys():
+		var c: Vector2 = CASTLE_POS[pid]
+		var mx := 1.0 if c.x < WORLD.x / 2.0 else -1.0
+		var my := 1.0 if c.y < WORLD.y / 2.0 else -1.0
+		for off in [Vector2(mx * 235, my * 105), Vector2(mx * 255, -my * 95), Vector2(mx * 330, my * 30)]:
+			_add_sheep(c + off, seed_val)
+			seed_val += 77
+	# Đàn giữa map + 2 đàn hai bên: điểm tranh thịt, phải trinh sát mới thấy.
+	for i in 6:
+		var a := TAU * float(i) / 6.0
+		_add_sheep(Vector2(960, 480) + Vector2(cos(a), sin(a)) * 90.0, seed_val)
+		seed_val += 77
+	for center in [Vector2(565, 480), Vector2(1355, 480)]:
+		for i in 3:
+			var a2 := TAU * float(i) / 3.0 + 0.5
+			_add_sheep(center + Vector2(cos(a2), sin(a2)) * 55.0, seed_val)
+			seed_val += 77
+
+func _add_sheep(pos: Vector2, seed_val: int) -> Sheep:
+	var s := Sheep.new()
+	s.setup(self, pos, seed_val)
+	s.position = pos
+	s.z_index = 6
+	_units_layer.add_child(s)
+	return s
+
+## Nông dân săn trúng: cừu chết -> sinh XÁC THỊT tại chỗ, trả về xác.
+func kill_sheep(sheep: Sheep) -> ResourceNode:
+	if sheep == null or not is_instance_valid(sheep) or not sheep.alive:
+		return null
+	var pos := sheep.global_position
+	sheep.kill()
+	sheep.queue_free()
+	var carcass := _add_node("meat", false, pos, 0)
+	return carcass
+
+## Cừu còn sống GẦN NHẤT mà phe này ĐÃ KHÁM PHÁ vị trí của nó.
+func nearest_sheep(pid: int, from_pos: Vector2) -> Sheep:
+	var fog: FogOfWar = fogs[pid]
+	var best: Sheep = null
+	var best_d := 1e9
+	for n in get_tree().get_nodes_in_group("sheep"):
+		var s := n as Sheep
+		if not s.alive:
+			continue
+		if not fog.is_explored_pos(s.global_position):
+			continue
+		var d := from_pos.distance_to(s.global_position)
+		if d < best_d:
+			best_d = d
+			best = s
+	return best
+
+## Cừu gần 1 điểm (cho click phải của người chơi — chỉ tính cừu đang SÁNG).
+func sheep_at(pos: Vector2, radius: float) -> Sheep:
+	var fog: FogOfWar = fogs[HUMAN_PID]
+	var best: Sheep = null
+	var best_d := radius
+	for n in get_tree().get_nodes_in_group("sheep"):
+		var s := n as Sheep
+		if not s.alive:
+			continue
+		if not fog.is_visible_pos(s.global_position):
+			continue
+		var d := s.global_position.distance_to(pos)
+		if d < best_d:
+			best_d = d
+			best = s
+	return best
+
+# ===================== KHO (điểm giao tài nguyên) =====================
+
+## Kho GẦN NHẤT của 1 phe: thành chính hoặc Nhà Kho đã xây xong còn đứng.
+## Nông dân chỉ được cộng tài nguyên khi vác về TỚI 1 kho như thế này.
+func nearest_dropoff(pid: int, from_pos: Vector2) -> Node2D:
+	var best: Node2D = null
+	var best_d := 1e9
+	if castles.has(pid):
+		var castle := castles[pid] as Castle
+		if castle != null and castle.is_alive():
+			best = castle
+			best_d = from_pos.distance_to(castle.global_position)
+	for n in get_tree().get_nodes_in_group("buildings"):
+		var b := n as Building
+		if b.owner_pid == pid and b.is_valid_dropoff():
+			var d := from_pos.distance_to(b.global_position)
+			if d < best_d:
+				best_d = d
+				best = b
+	return best
 
 func _build_castles() -> void:
 	for pid in CASTLE_POS.keys():
@@ -233,7 +349,7 @@ func _build_start_villagers() -> void:
 		for i in int(Stats.ECONOMY["start_villagers"]):
 			_spawn_villager(pid)
 		# Phân bổ mặc định: 2 gỗ + 1 vàng.
-		exec_set_allocation(players[pid], 2, 0, 1)
+		exec_set_allocation(players[pid], 2, 0, 1, 0)
 
 func _build_fog() -> void:
 	for pid in CASTLE_POS.keys():
@@ -258,7 +374,7 @@ func _build_hud() -> void:
 	_hud.setup(self, human_controller())
 	add_child(_hud)
 	# Panel hướng dẫn tự mở khi vào trận (trừ chế độ demo chụp ảnh).
-	if not demo_mode and not m2demo_mode:
+	if not demo_mode and not m2demo_mode and not g2demo_mode:
 		_hud.show_help()
 
 # ===================== SƯƠNG MÙ =====================
@@ -298,6 +414,10 @@ func _refresh_human_display() -> void:
 	for n in get_tree().get_nodes_in_group("villagers"):
 		var v := n as Villager
 		v.visible = v.owner_pid == HUMAN_PID or fog.is_visible_pos(v.global_position)
+	# Cừu trung lập: chỉ hiện khi ô đang SÁNG với người chơi.
+	for n in get_tree().get_nodes_in_group("sheep"):
+		var sh := n as Sheep
+		sh.visible = fog.is_visible_pos(sh.global_position)
 	for n in get_tree().get_nodes_in_group("projectiles"):
 		var pr := n as Projectile
 		pr.visible = pr.owner_pid == HUMAN_PID or fog.is_visible_pos(pr.global_position)
@@ -359,8 +479,8 @@ func visible_enemy_units_for(pid: int, point: Vector2, radius: float) -> Array:
 
 # ===================== THỰC THI LỆNH (qua PlayerController) =====================
 
-func exec_set_allocation(player: PlayerState, w: int, s: int, g: int) -> bool:
-	player.allocation = {"wood": w, "stone": s, "gold": g}
+func exec_set_allocation(player: PlayerState, w: int, s: int, g: int, m: int = 0) -> bool:
+	player.allocation = {"wood": w, "stone": s, "gold": g, "meat": m}
 	_rebalance_villagers(player)
 	return true
 
@@ -372,8 +492,8 @@ func _rebalance_villagers(player: PlayerState) -> void:
 	# lệnh trực tiếp ưu tiên hơn phân bổ +/-. Số lượng direct theo từng loại
 	# được trừ vào chỉ tiêu phân bổ, phần còn lại chia cho nông dân chưa có lệnh.
 	var list := _villagers_of(player.pid)
-	var want := [int(player.allocation["wood"]), int(player.allocation["stone"]), int(player.allocation["gold"])]
-	var keys := ["wood", "stone", "gold"]
+	var want := [int(player.allocation["wood"]), int(player.allocation["stone"]), int(player.allocation["gold"]), int(player.allocation["meat"])]
+	var keys := ["wood", "stone", "gold", "meat"]
 	for v in list:
 		var vil := v as Villager
 		if vil.is_direct():
@@ -381,7 +501,7 @@ func _rebalance_villagers(player: PlayerState) -> void:
 			if ki >= 0:
 				want[ki] = maxi(0, want[ki] - 1)
 	var idx := 0
-	for ki in 3:
+	for ki in 4:
 		for j in want[ki]:
 			while idx < list.size() and (list[idx] as Villager).is_direct():
 				idx += 1
@@ -408,6 +528,7 @@ func build_slots(pid: int) -> Array:
 		c + Vector2(mx * -105, my * 80),
 		c + Vector2(mx * 30, my * -102),
 		c + Vector2(mx * 30, my * 102),
+		c + Vector2(mx * -175, 0), # ô cho Nhà Kho (đặt ngoài vùng căn cứ cũng được)
 	]
 
 func exec_place_building(player: PlayerState, building_type: String, pos: Vector2) -> bool:
@@ -416,7 +537,12 @@ func exec_place_building(player: PlayerState, building_type: String, pos: Vector
 	var def: Dictionary = Stats.BUILDINGS[building_type]
 	if not player.can_afford(def["cost"]):
 		return false
-	if not base_zone(player.pid).has_point(pos):
+	if building_type == "storehouse":
+		# Nhà Kho: đặt ở bất cứ vùng ĐÃ KHÁM PHÁ nào của phe mình (để kê
+		# gần bãi farm xa), không giới hạn vùng căn cứ như nhà thường.
+		if not is_pos_explored_for(player.pid, pos):
+			return false
+	elif not base_zone(player.pid).has_point(pos):
 		return false
 	for n in get_tree().get_nodes_in_group("structures"):
 		var s := n as Structure
@@ -424,6 +550,9 @@ func exec_place_building(player: PlayerState, building_type: String, pos: Vector
 			return false
 	for n in get_tree().get_nodes_in_group("res_nodes"):
 		if (n as Node2D).global_position.distance_to(pos) < 48.0:
+			return false
+	for n in get_tree().get_nodes_in_group("sheep"):
+		if (n as Node2D).global_position.distance_to(pos) < 40.0:
 			return false
 	player.pay(def["cost"])
 	var b := BuildingScene.instantiate() as Building
@@ -496,11 +625,16 @@ func exec_villager_move(player: PlayerState, v: Villager, point: Vector2) -> boo
 	v.set_move_point(clamp_to_world(point))
 	return true
 
-func exec_direct_farm(player: PlayerState, v: Villager, node: ResourceNode) -> bool:
-	if v == null or v.owner_pid != player.pid or node == null:
+func exec_direct_farm(player: PlayerState, v: Villager, node: Node2D) -> bool:
+	if v == null or v.owner_pid != player.pid or node == null or not is_instance_valid(node):
 		return false
-	# Lệnh farm trực tiếp cũng tôn trọng sương mù: chỉ farm điểm đã khám phá.
+	# Lệnh farm trực tiếp cũng tôn trọng sương mù: chỉ farm/săn mục tiêu
+	# ở vùng đã khám phá của phe mình.
 	if not is_pos_explored_for(player.pid, node.global_position):
+		return false
+	if node is Sheep and not (node as Sheep).alive:
+		return false
+	if node is ResourceNode and (node as ResourceNode).is_depleted():
 		return false
 	v.set_direct(node)
 	return true
@@ -723,7 +857,7 @@ func _villagers_of(pid: int) -> Array:
 	return out
 
 func building_counts(pid: int) -> Dictionary:
-	var counts := {"house": 0, "barracks": 0, "tower": 0}
+	var counts := {"house": 0, "barracks": 0, "tower": 0, "storehouse": 0}
 	for n in get_tree().get_nodes_in_group("buildings"):
 		var b := n as Building
 		if b.owner_pid == pid and b.is_alive():
@@ -872,6 +1006,12 @@ func _end_match(won: bool) -> void:
 func set_placement_mode(building_type: String) -> void:
 	placing_type = building_type
 	awaiting_order = false
+	if building_type == "storehouse":
+		# Nhà Kho đặt được ở mọi vùng đã khám phá -> không hiện khung vùng căn cứ.
+		_zone_rect.visible = false
+		if _hud != null:
+			_hud.show_message("Bấm vào vùng ĐÃ KHÁM PHÁ bất kỳ để đặt Nhà Kho — điểm giao tài nguyên (chuột phải để huỷ).")
+		return
 	_zone_rect.polygon = PackedVector2Array([
 		base_zone(HUMAN_PID).position,
 		base_zone(HUMAN_PID).position + Vector2(base_zone(HUMAN_PID).size.x, 0),
@@ -928,6 +1068,18 @@ func _handle_right_click(pos: Vector2) -> void:
 		else:
 			if _hud != null:
 				_hud.show_message("Mục tiêu chưa lộ diện — hãy cho quân trinh sát tới gần trước!")
+		return
+	# 2.5) Cừu đang SÁNG -> nông dân đi SĂN lấy thịt (chỉ nông dân săn được).
+	var sheep := sheep_at(pos, 36.0)
+	if sheep != null:
+		var n_hunt := ctrl.order_selected_farm(sheep)
+		if n_hunt > 0:
+			spawn_order_marker(sheep.global_position, Color(0.3, 1, 0.4))
+			if _hud != null:
+				_hud.show_message("Nông dân đi săn cừu lấy thịt.")
+		else:
+			if _hud != null:
+				_hud.show_message("Hãy chọn NÔNG DÂN để săn cừu (quân lính không săn).")
 		return
 	# 3) Tài nguyên -> nông dân farm đúng loại đó; quân đi tới điểm đó.
 	var node := res_node_at(pos, 36.0)
@@ -1120,6 +1272,123 @@ func _demo_m2_update(delta: float) -> void:
 				_take_shot("res://screenshots/m2_suong_mu_mo.png")
 				_m2demo_stage = 13
 		13:
+			get_tree().quit()
+
+# ===================== DEMO GIAI ĐOẠN 2 (chạy với -- --g2demo, không bot) ====
+# Sân khấu chụp ảnh kiểm chứng hệ tài nguyên: cây cạn còn gốc -> dân vác thịt
+# từ cừu -> Nhà Kho nhận tài nguyên -> mỏ vàng lớn ở trạng thái Destroyed.
+
+func _g2_villagers() -> Array:
+	var list: Array = []
+	for n in get_tree().get_nodes_in_group("villagers"):
+		var v := n as Villager
+		if v.owner_pid == HUMAN_PID:
+			list.append(v)
+	return list
+
+func _demo_g2_update(delta: float) -> void:
+	if elapsed > 400.0:
+		get_tree().quit()
+		return
+	var p0: PlayerState = players[HUMAN_PID]
+	var castle_pos: Vector2 = castles[HUMAN_PID].global_position
+	match _g2demo_stage:
+		0:
+			p0.resources["wood"] = int(p0.resources["wood"]) + 500
+			var vils := _g2_villagers()
+			# Cây gần thành: để trữ lượng nhỏ cho cạn nhanh.
+			_g2_tree = nearest_resource_node(HUMAN_PID, "wood", castle_pos) as ResourceNode
+			_g2_tree.set_amount(15)
+			exec_direct_farm(p0, vils[0], _g2_tree)
+			# Dân 2: săn cừu gần nhất.
+			_g2_hunter = vils[1]
+			var sheep := nearest_sheep(HUMAN_PID, castle_pos)
+			if sheep != null:
+				exec_direct_farm(p0, _g2_hunter, sheep)
+			# Nhà Kho cạnh mỏ vàng nhỏ + dân 3 farm vàng (giao về kho này).
+			exec_place_building(p0, "storehouse", castle_pos + Vector2(185, -140))
+			for n in get_tree().get_nodes_in_group("buildings"):
+				var b := n as Building
+				if b.owner_pid == HUMAN_PID and b.building_type == "storehouse":
+					_g2_store = b
+					b.constructed = true
+			var gold_node := nearest_resource_node(HUMAN_PID, "gold", castle_pos)
+			if gold_node != null:
+				exec_direct_farm(p0, vils[2], gold_node)
+			# Mỏ vàng lớn giữa map: ghi lại vị trí; luyện thêm 1 nông dân
+			# làm trinh sát (cử đi ở stage 5, cho mỏ cạn khi trinh sát tới gần).
+			for n in get_tree().get_nodes_in_group("res_nodes"):
+				var rn := n as ResourceNode
+				if rn.res_type == "gold" and rn.is_big:
+					_g2_mine = rn
+			human_controller().queue_training(castles[HUMAN_PID], "pawn")
+			_g2demo_stage = 1
+		1:
+			if _g2_tree != null and _g2_tree.is_stump():
+				_g2demo_timer += delta
+				if _g2demo_timer > 1.2:
+					set_camera_to(_g2_tree.global_position + Vector2(60, 40))
+					_g2demo_timer = 0.0
+					_g2demo_stage = 2
+		2:
+			_g2demo_timer += delta
+			if _g2demo_timer > 0.6:
+				_take_shot("res://screenshots/g2_cay_do_goc.png")
+				_g2demo_timer = 0.0
+				_g2demo_stage = 3
+		3:
+			if _g2_hunter != null and _g2_hunter.carrying_type == "meat":
+				set_camera_to(_g2_hunter.global_position + Vector2(-40, 30))
+				_g2demo_stage = 4
+		4:
+			_g2demo_timer += delta
+			if _g2demo_timer > 0.35:
+				_take_shot("res://screenshots/g2_cuu_vac_thit.png")
+				_g2demo_timer = 0.0
+				_g2demo_stage = 5
+		5:
+			if not _g2_scout_sent and villager_count(HUMAN_PID) >= 4:
+				for v in _g2_villagers():
+					var vil := v as Villager
+					if vil != _g2_hunter and not vil.is_direct():
+						vil.set_move_point(_g2_mine.global_position + Vector2(-70, 60))
+						_g2_scout_sent = true
+			var delivering := false
+			if _g2_store != null:
+				for v in _g2_villagers():
+					var vil := v as Villager
+					if vil.carrying > 0 and vil.global_position.distance_to(_g2_store.global_position) < 300.0:
+						delivering = true
+			_g2demo_timer += delta
+			if delivering or _g2demo_timer > 45.0:
+				set_camera_to(_g2_store.global_position + Vector2(30, 30))
+				_g2demo_timer = 0.0
+				_g2demo_stage = 6
+		6:
+			_g2demo_timer += delta
+			if _g2demo_timer > 0.6:
+				_take_shot("res://screenshots/g2_nha_kho.png")
+				_g2demo_timer = 0.0
+				_g2demo_stage = 7
+		7:
+			if _g2_mine == null or not is_instance_valid(_g2_mine):
+				_g2demo_stage = 9 # mỏ đã biến mất trước khi trinh sát tới
+			else:
+				# Trinh sát tới gần -> cho mỏ cạn NGAY (hiện Destroyed 6s).
+				if not _g2_mine.is_depleted():
+					for v in _g2_villagers():
+						if (v as Villager).global_position.distance_to(_g2_mine.global_position) < 320.0:
+							_g2_mine.set_amount(0)
+				if _g2_mine.is_depleted() and (fogs[HUMAN_PID] as FogOfWar).is_visible_pos(_g2_mine.global_position):
+					set_camera_to(_g2_mine.global_position)
+					_g2demo_timer = 0.0
+					_g2demo_stage = 8
+		8:
+			_g2demo_timer += delta
+			if _g2demo_timer > 0.6:
+				_take_shot("res://screenshots/g2_mo_destroyed.png")
+				_g2demo_stage = 9
+		9:
 			get_tree().quit()
 
 # ===================== LỚP PHỦ SƯƠNG MÙ (vẽ cho người chơi) =====================

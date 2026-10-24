@@ -58,12 +58,14 @@ func _run() -> void:
 		"đặt nhà=%s, giới hạn %d -> %d (mỗi nhà +%d)" % [str(placed), cap0, g.pop_cap(0), int(Stats.ECONOMY["pop_per_house"])])
 
 	# ============ c) Huấn luyện: trừ đúng tài nguyên + chặn ở giới hạn ============
+	# M2 giai đoạn 2: nông dân tốn THỊT (stats) thay cho 50 vàng như M1.
 	p0.resources["gold"] = 5000
 	p0.resources["wood"] = 5000
-	var gold_before: int = p0.resources["gold"]
+	p0.resources["meat"] = 5000
+	var gold_before: int = p0.resources["meat"]
 	var ok_train: bool = ctrl0.queue_training(g.castles[0], "pawn")
-	var gold_after: int = p0.resources["gold"]
-	var cost_pawn: int = Stats.TRAINING["pawn"]["cost"]["gold"]
+	var gold_after: int = p0.resources["meat"]
+	var cost_pawn: int = Stats.TRAINING["pawn"]["cost"]["meat"]
 	var blocked := false
 	var guard := 0
 	while guard < 60:
@@ -78,7 +80,7 @@ func _run() -> void:
 			break
 		await _wait(0.3)
 	_check("c", ok_train and gold_before - gold_after == cost_pawn and blocked,
-		"luyện nông dân trừ %d vàng (đúng stats=%d); bị chặn khi dân số %d/%d" % [gold_before - gold_after, cost_pawn, g.pop_used(0), g.pop_cap(0)])
+		"luyện nông dân trừ %d thịt (đúng stats=%d); bị chặn khi dân số %d/%d" % [gold_before - gold_after, cost_pawn, g.pop_used(0), g.pop_cap(0)])
 
 	# ============ d) Tổng tấn công phá thành địch (có trinh sát lộ diện trước) ============
 	g = await _new_game(false, 30.0)
