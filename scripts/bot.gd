@@ -107,7 +107,10 @@ func _decide() -> void:
 		ctrl.place_building("house", slots[0])
 	elif int(counts.get("barracks", 0)) == 0:
 		ctrl.place_building("barracks", slots[1])
-	elif int(counts.get("tower", 0)) == 0:
+	elif int(counts.get("tower", 0)) == 0 and game.pop_used(player.pid) + 1 <= game.pop_cap(player.pid):
+		# Tháp giữ thêm 1 ô dân cho cung thủ đứng bắn: hết ô thì BỎ QUA
+		# tháp, xây nhà khác trước (Nhà Kho / Nhà 2 để nới dân số) thay vì
+		# kẹt mãi ở bước này. Luật chặn thật vẫn nằm ở Main.can_place.
 		ctrl.place_building("tower", slots[2])
 	elif int(counts.get("storehouse", 0)) == 0:
 		ctrl.place_building("storehouse", slots[4])

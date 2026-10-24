@@ -14,6 +14,12 @@ var _tex_normal: Texture2D
 var _tex_destroyed: Texture2D
 var _tex_construction: Texture2D
 
+# Cung thủ đứng trên đỉnh tháp canh (chỉ tower): tháp không tự bắn — xây
+# xong thì node này hiện và CHÍNH NÓ bắn (số bắn lấy theo Stats.UNITS của
+# crew_unit). Không phải Unit: không chọn được, không di chuyển, không bị
+# nhắm riêng — đòn vào tháp tính vào máu tháp; tháp sập là nó biến mất.
+var _archer: AnimatedSprite2D = null
+
 func setup(p_pid: int, p_type: String, p_color: String, p_main: Node) -> void:
 	owner_pid = p_pid
 	building_type = p_type
@@ -69,7 +75,41 @@ func _ready() -> void:
 			_sprite.position = Vector2(0, -30)
 	add_child(_sprite)
 	_make_fire()
+	if building_type == "tower":
+		_build_archer()
 	_refresh_display()
+
+## Dựng cung thủ đứng trên đỉnh tháp: dùng đúng bộ frame Archer của pack
+## như Unit (idle 6 frame, shoot 8 frame, khung 192px, tỉ lệ 0.5 như quân
+## thật). Vị trí: chân cung thủ (điểm dưới frame, lệch +40px từ tâm khung)
+## đáp lên nóc tháp (đỉnh sprite tháp hiển thị ở y ≈ -89 theo building).
+func _build_archer() -> void:
+	_archer = AnimatedSprite2D.new()
+	var sf := SpriteFrames.new()
+	var base := "res://assets/units/%s/" % color_key
+	_add_archer_anim(sf, "idle", base + "archer_idle.png", 6, 8.0)
+	_add_archer_anim(sf, "attack", base + "archer_shoot.png", 8, 12.0)
+	_archer.sprite_frames = sf
+	_archer.scale = Vector2(0.5, 0.5)
+	_archer.position = Vector2(0, -114)
+	_archer.visible = false
+	add_child(_archer)
+	_archer.play("idle")
+
+func _add_archer_anim(sf: SpriteFrames, anim_name: String, tex_path: String, frames: int, fps: float) -> void:
+	var sheet := load(tex_path) as Texture2D
+	sf.add_animation(anim_name)
+	sf.set_animation_speed(anim_name, fps)
+	sf.set_animation_loop(anim_name, anim_name != "attack")
+	for i in frames:
+		var at := AtlasTexture.new()
+		at.atlas = sheet
+		at.region = Rect2(i * 192, 0, 192, 192)
+		sf.add_frame(anim_name, at)
+
+## Tháp đã xây xong và cung thủ đang đứng trên đỉnh (để test/HUD kiểm tra).
+func archer_manned() -> bool:
+	return building_type == "tower" and constructed and is_alive() and _archer != null
 
 func disp_constructed() -> bool:
 	return display_constructed if use_snapshot else constructed
@@ -90,6 +130,11 @@ func _refresh_display() -> void:
 	else:
 		_sprite.texture = _tex_normal
 		_sprite.modulate = Color.WHITE
+	# Cung thủ trên tháp: chỉ đứng trên tháp ĐÃ XÂY XONG và còn đứng vững —
+	# đang xây thì chưa có ai, tháp sập thì cung thủ chết theo (biến mất).
+	# Đi theo đúng trạng thái HIỂN THỊ (snapshot sương mù) như sprite tháp.
+	if _archer != null:
+		_archer.visible = disp_constructed() and not disp_destroyed()
 
 func can_produce() -> bool:
 	return super.can_produce() and constructed
@@ -113,12 +158,45 @@ func _process(delta: float) -> void:
 		return
 	_tick_production(delta)
 	if building_type == "tower":
-		var def: Dictionary = Stats.BUILDINGS["tower"]
-		_tick_tower(delta, def["tower_range"], def["tower_damage"], def["tower_cooldown"], def["projectile_speed"], global_position + Vector2(0, -100))
+		_tick_tower_archer(delta)
+
+## Cung thủ trên đỉnh tháp bắn thay tháp (tháp không còn tự bắn):
+## - Mục tiêu: quân địch GẦN NHẤT trong tầm tháp (Stats tower_range) VÀ
+##   đang nằm trong tầm nhìn của phe mình (cổng sương mù tầng dữ liệu —
+##   tầm tháp 185 < tầm nhìn tháp 250 nên địch vào tầm bắn là đã lộ diện).
+## - Sát thương / hồi chiêu / tốc độ tên: theo Stats.UNITS[crew_unit]
+##   (cung thủ) — nó bắn phát nào, hoạt ảnh "attack" chạy phát đó.
+func _tick_tower_archer(delta: float) -> void:
+	_tower_timer = maxf(0.0, _tower_timer - delta)
+	if _archer != null and _archer.animation == "attack" and not _archer.is_playing():
+		_archer.play("idle")
+	if _tower_timer > 0.0 or main_ref == null:
+		return
+	var def: Dictionary = Stats.BUILDINGS["tower"]
+	var ust: Dictionary = Stats.UNITS[str(def.get("crew_unit", "archer"))]
+	var best: Unit = null
+	var best_d := float(def["tower_range"])
+	for n in get_tree().get_nodes_in_group("units"):
+		var u := n as Unit
+		if u == null or u.owner_pid == owner_pid or not u.is_alive():
+			continue
+		if not main_ref.is_pos_visible_for(owner_pid, u.global_position):
+			continue
+		var d := global_position.distance_to(u.global_position)
+		if d < best_d:
+			best_d = d
+			best = u
+	if best != null:
+		_tower_timer = float(ust["attack_cooldown"])
+		if _archer != null:
+			_archer.flip_h = best.global_position.x < global_position.x
+			_archer.play("attack")
+		main_ref.spawn_projectile(global_position + Vector2(0, -108), best, float(ust["damage"]), owner_pid, float(ust["projectile_speed"]), color_key)
 
 func _draw() -> void:
 	var w := 84.0
-	var pos := Vector2(-w / 2.0, -96.0) if building_type != "tower" else Vector2(-w / 2.0, -122.0)
+	# Tháp: thanh nằm TRÊN ĐẦU cung thủ đứng nóc (đầu cung thủ ở y ≈ -138).
+	var pos := Vector2(-w / 2.0, -96.0) if building_type != "tower" else Vector2(-w / 2.0, -148.0)
 	if not disp_constructed() and not disp_destroyed():
 		# Thanh tiến độ xây.
 		draw_rect(Rect2(pos, Vector2(w, 7)), Color(0, 0, 0, 0.7))

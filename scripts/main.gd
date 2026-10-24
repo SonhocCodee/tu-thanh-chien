@@ -468,6 +468,11 @@ func _refresh_human_display() -> void:
 func is_pos_explored_for(pid: int, pos: Vector2) -> bool:
 	return (fogs[pid] as FogOfWar).is_explored_pos(pos)
 
+## Ô tại pos có đang SÁNG (trong tầm nhìn hiện tại) với phe pid không —
+## cổng sương mù ở tầng dữ liệu cho đơn vị bắn xa / tháp canh.
+func is_pos_visible_for(pid: int, pos: Vector2) -> bool:
+	return (fogs[pid] as FogOfWar).is_visible_pos(pos)
+
 func is_castle_revealed_for(pid: int, target_pid: int) -> bool:
 	if pid == target_pid or not castles.has(target_pid):
 		return false
@@ -555,6 +560,12 @@ func can_place_building(player: PlayerState, building_type: String, pos: Vector2
 	var def: Dictionary = Stats.BUILDINGS[building_type]
 	if not player.can_afford(def["cost"]):
 		return false
+	# Công trình có tổ vận hành (tháp canh giữ 1 ô cho cung thủ đứng bắn):
+	# dân số phải còn trống đủ ô NGAY LÚC ĐẶT — bóng ma xem trước gọi đúng
+	# hàm này nên tự nhuộm đỏ khi hết ô, không cần luật riêng.
+	var crew_pop := int(def.get("crew_pop", 0))
+	if crew_pop > 0 and pop_used(player.pid) + crew_pop > pop_cap(player.pid):
+		return false
 	if building_type == "storehouse":
 		# Nhà Kho: đặt ở bất cứ vùng ĐÃ KHÁM PHÁ nào của phe mình (để kê
 		# gần bãi farm xa), không giới hạn vùng căn cứ như nhà thường.
@@ -573,6 +584,21 @@ func can_place_building(player: PlayerState, building_type: String, pos: Vector2
 		if (n as Node2D).global_position.distance_to(pos) < 40.0:
 			return false
 	return true
+
+## Lý do ĐẶC THÙ khiến đặt nhà bị từ chối ("" = đặt được, hoặc bị từ chối
+## vì lý do chung chung như ngoài vùng/trùng/thiếu tiền — caller tự dùng
+## câu mặc định). Hiện chỉ có 1 lý do đặc thù: tháp canh cần ô dân cho
+## cung thủ mà dân số đã đầy. HUD gọi hàm này sau khi đặt thất bại để
+## hiện thông báo rõ cho người chơi.
+func place_fail_reason(player: PlayerState, building_type: String, pos: Vector2) -> String:
+	if can_place_building(player, building_type, pos):
+		return ""
+	if not Stats.BUILDINGS.has(building_type):
+		return ""
+	var crew_pop := int(Stats.BUILDINGS[building_type].get("crew_pop", 0))
+	if crew_pop > 0 and pop_used(player.pid) + crew_pop > pop_cap(player.pid):
+		return "Tháp cần 1 ô dân cho cung thủ đứng bắn — dân số đã đầy (%d/%d). Xây thêm Nhà Dân trước!" % [pop_used(player.pid), pop_cap(player.pid)]
+	return ""
 
 func exec_place_building(player: PlayerState, building_type: String, pos: Vector2) -> bool:
 	if not can_place_building(player, building_type, pos):
@@ -861,6 +887,14 @@ func pop_used(pid: int) -> int:
 		var s := n as Structure
 		if s.owner_pid == pid:
 			used += s.queue_count()
+	# Công trình có TỔ VẬN HÀNH (tháp canh: crew_pop ô cho cung thủ đứng
+	# bắn trên đỉnh): ô được GIỮ từ lúc đặt — tháp đang xây đã tính — cho
+	# tới khi tháp sập thì trả lại. Đếm ngay trong hàm này để HUD, luật
+	# huấn luyện và luật đặt nhà dùng chung đúng 1 con số dân số.
+	for n in get_tree().get_nodes_in_group("buildings"):
+		var b := n as Building
+		if b.owner_pid == pid and b.is_alive():
+			used += int(Stats.BUILDINGS[b.building_type].get("crew_pop", 0))
 	return used
 
 func villager_count(pid: int) -> int:
@@ -1044,7 +1078,10 @@ func set_placement_mode(building_type: String) -> void:
 	])
 	_zone_rect.visible = true
 	if _hud != null:
-		_hud.show_message("Bấm vào vùng sáng quanh thành để đặt %s (chuột phải để huỷ)." % Stats.BUILDINGS[building_type]["label"])
+		if building_type == "tower":
+			_hud.show_message("Bấm vào vùng sáng quanh thành để đặt Tháp canh — tháp giữ thêm 1 ô dân cho cung thủ đứng bắn (chuột phải để huỷ).")
+		else:
+			_hud.show_message("Bấm vào vùng sáng quanh thành để đặt %s (chuột phải để huỷ)." % Stats.BUILDINGS[building_type]["label"])
 
 func cancel_modes() -> void:
 	placing_type = ""
@@ -1206,7 +1243,13 @@ func _unhandled_input(event: InputEvent) -> void:
 		if placing_type != "":
 			var ok := human_controller().place_building(placing_type, pos)
 			if _hud != null:
-				_hud.show_message("Đã đặt %s." % Stats.BUILDINGS[placing_type]["label"] if ok else "Không đặt được ở đó (ngoài vùng/thiếu tài nguyên/trùng công trình).")
+				if ok:
+					_hud.show_message("Đã đặt %s." % Stats.BUILDINGS[placing_type]["label"])
+				else:
+					# Lý do đặc thù (vd tháp hết ô dân cho cung thủ) thì nói rõ,
+					# còn lại dùng câu chung như cũ.
+					var reason := place_fail_reason(players[HUMAN_PID], placing_type, pos)
+					_hud.show_message(reason if reason != "" else "Không đặt được ở đó (ngoài vùng/thiếu tài nguyên/trùng công trình).")
 			if ok:
 				cancel_modes()
 			return

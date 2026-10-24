@@ -80,10 +80,14 @@ const BUILDINGS := {
 		"build_time": 15.0,
 		"hp": 300.0,
 		"radius": 34.0,
-		"tower_damage": 10.0,
 		"tower_range": 185.0,
-		"tower_cooldown": 1.1,
-		"projectile_speed": 470.0,
+		# Tháp KHÔNG tự bắn: xây xong có 1 CUNG THỦ đứng trên đỉnh tháp và
+		# chính nó bắn — sát thương / hồi chiêu / tốc độ tên lấy theo
+		# Stats.UNITS[crew_unit]. "crew_pop" = số ô dân tháp GIỮ cho cung thủ
+		# trong suốt thời gian tháp còn đứng (đếm trong Main.pop_used như mọi
+		# ô dân khác; đặt tháp khi dân số đầy bị từ chối ngay ở can_place).
+		"crew_unit": "archer",
+		"crew_pop": 1,
 	},
 	# Nhà Kho: điểm giao tài nguyên (drop-off) phụ cạnh thành chính — nhận MỌI
 	# tài nguyên kể cả vàng. Không sản xuất, không cộng dân số. Đặt được ở mọi
