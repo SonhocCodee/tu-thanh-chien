@@ -54,6 +54,7 @@ const GHOST_PRESENT := {
 	"store_gold": [0.38, -26.0],
 	"store_meat": [0.46, -28.0],
 	"soldier_house": [0.55, -28.0],
+	"farm": [1.0, -26.0],
 }
 
 # --- Con trỏ ngữ cảnh khi di chuột (hover) ---
@@ -589,6 +590,7 @@ func _refresh_human_display() -> void:
 			s.display_destroyed = s.destroyed
 			if s is Building:
 				s.display_constructed = (s as Building).constructed
+				(s as Building).display_farm_stage = (s as Building).farm_stage()
 			s._refresh_display()
 			s.queue_redraw()
 		else:
@@ -959,6 +961,10 @@ func exec_direct_farm(player: PlayerState, v: Villager, node: Node2D) -> bool:
 		return false
 	if node is ResourceNode and (node as ResourceNode).is_depleted():
 		return false
+	# Node có chủ (ruộng): chỉ chủ mới ra lệnh farm được.
+	if node is ResourceNode and (node as ResourceNode).owner_pid >= 0 \
+			and (node as ResourceNode).owner_pid != player.pid:
+		return false
 	v.set_direct(node)
 	return true
 
@@ -1053,6 +1059,9 @@ func res_node_at(pos: Vector2, radius: float) -> ResourceNode:
 	var best_d := radius
 	for n in get_tree().get_nodes_in_group("res_nodes"):
 		var node := n as ResourceNode
+		# Ruộng của địch không phải mục tiêu click phải của người chơi.
+		if node.owner_pid >= 0 and node.owner_pid != HUMAN_PID:
+			continue
 		var d := node.global_position.distance_to(pos)
 		if d < best_d:
 			best_d = d
@@ -1279,7 +1288,7 @@ func _villagers_of(pid: int) -> Array:
 
 func building_counts(pid: int) -> Dictionary:
 	var counts := {"house": 0, "barracks": 0, "tower": 0, "soldier_house": 0,
-		"store_wood": 0, "store_stone": 0, "store_gold": 0, "store_meat": 0}
+		"store_wood": 0, "store_stone": 0, "store_gold": 0, "store_meat": 0, "farm": 0}
 	for n in get_tree().get_nodes_in_group("buildings"):
 		var b := n as Building
 		if b.owner_pid == pid and b.is_alive():
@@ -1306,6 +1315,10 @@ func nearest_resource_node(pid: int, res_type: String, from_pos: Vector2) -> Nod
 	for n in get_tree().get_nodes_in_group("res_nodes"):
 		var node := n as ResourceNode
 		if node.res_type != res_type:
+			continue
+		# Node có chủ (node thịt trong RUỘNG): chỉ nông dân của CHỦ mới
+		# được làm — cấm farm trộm ruộng của phe khác.
+		if node.owner_pid >= 0 and node.owner_pid != pid:
 			continue
 		# Nông dân chỉ tới điểm tài nguyên thuộc vùng ĐÃ KHÁM PHÁ của phe mình.
 		if not fog.is_explored_pos(node.global_position):
@@ -1374,7 +1387,10 @@ func spawn_explosion(pos: Vector2, scale_factor: float = 1.0) -> void:
 # ===================== PHÁ HUỶ / LOẠI PHE =====================
 
 func _on_structure_destroyed(s: Structure) -> void:
-	spawn_explosion(s.global_position, 1.2 if s is Castle else 0.8)
+	# Công trình sập TỰ NHIÊN (ruộng cạn) thì không nổ — chỉ sập vì đòn
+	# đánh mới có vụ nổ.
+	if not s.silent_destroy:
+		spawn_explosion(s.global_position, 1.2 if s is Castle else 0.8)
 	_loot_structure(s)
 	if s is Castle:
 		_eliminate_player(s.owner_pid)
@@ -1484,6 +1500,8 @@ func set_placement_mode(building_type: String) -> void:
 			var res_key := str(Stats.BUILDINGS[building_type]["storage_res"])
 			_hud.show_message("Bấm vào vùng ĐÃ KHÁM PHÁ bất kỳ để đặt %s — điểm giao %s, nông dân sẽ ra xây (chuột phải để huỷ)." % [
 				str(Stats.BUILDINGS[building_type]["label"]), str(Stats.RES_LABELS[res_key]).to_lower()])
+		elif building_type == "farm":
+			_hud.show_message("Bấm vào vùng ĐÃ KHÁM PHÁ bất kỳ để đặt Ruộng — nông dân làm ruộng lấy thịt, cạn thì xây lại, nông dân sẽ ra xây (chuột phải để huỷ).")
 		elif building_type == "tower":
 			_hud.show_message("Bấm vào vùng ĐÃ KHÁM PHÁ bất kỳ trên đất để đặt Tháp canh — tháp giữ thêm 1 ô dân cho cung thủ đứng bắn, nông dân sẽ ra xây (chuột phải để huỷ).")
 		else:
@@ -1522,7 +1540,11 @@ func _ensure_place_ghost() -> void:
 func _setup_ghost_for(building_type: String) -> void:
 	_ghost_type = building_type
 	var color_key: String = players[HUMAN_PID].color_key
-	_ghost_sprite.texture = load("res://assets/buildings/%s_%s.png" % [building_type, color_key])
+	if building_type == "farm":
+		# Ruộng không có biến thể theo màu phe — 1 texture chung.
+		_ghost_sprite.texture = load("res://assets/buildings/farm.png")
+	else:
+		_ghost_sprite.texture = load("res://assets/buildings/%s_%s.png" % [building_type, color_key])
 	var present: Array = GHOST_PRESENT.get(building_type, [0.55, -30.0])
 	var sc := float(present[0])
 	_ghost_sprite.scale = Vector2(sc, sc)

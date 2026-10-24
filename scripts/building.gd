@@ -75,6 +75,16 @@ func _ready() -> void:
 			_tex_normal = load("res://assets/buildings/soldier_house_%s.png" % color_key)
 			_tex_destroyed = load("res://assets/buildings/house_destroyed.png")
 			_tex_construction = load("res://assets/buildings/house_construction.png")
+		"farm":
+			# Ruộng: KHÔNG theo màu phe (đất/cây như nhau mọi phe). Sprite
+			# là ô đất + cây theo GIAI ĐOẠN còn lại (đất = tile cỏ Tiny
+			# Swords nhuộm nâu, cây = Farm RPG Spring Crops — sinh bởi
+			# tools/make_farm_art.py). Đang xây / tàn tích / sau khi cạn
+			# = đất trống farm_bare. _refresh_display chọn bản theo giai
+			# đoạn qua _farm_stage_texture().
+			_tex_normal = load("res://assets/buildings/farm.png")
+			_tex_destroyed = load("res://assets/buildings/farm_bare.png")
+			_tex_construction = load("res://assets/buildings/farm_bare.png")
 	_sprite = Sprite2D.new()
 	match building_type:
 		"house":
@@ -102,12 +112,19 @@ func _ready() -> void:
 			# House3 cùng cỡ canvas 128x192 với House1 (nhà dân) -> cùng tỉ lệ.
 			_sprite.scale = Vector2(0.55, 0.55)
 			_sprite.position = Vector2(0, -28)
+		"farm":
+			# Ô đất 160x112 nằm PHẲNG trên mặt đất: tâm sprite nhấc lên
+			# 26px để chân ruộng (đáy ô đất) trùng điểm đặt.
+			_sprite.scale = Vector2(1.0, 1.0)
+			_sprite.position = Vector2(0, -26)
 	add_child(_sprite)
 	if is_storage():
 		_make_sign()
 	_make_fire()
 	if building_type == "tower":
 		_build_archer()
+	if building_type == "farm":
+		_build_farm()
 	_refresh_display()
 
 # Icon tài nguyên dùng cho biển hiệu kho — cùng bộ icon HUD đang dùng.
@@ -160,6 +177,115 @@ func _update_sign() -> void:
 		if show:
 			_stored_label.text = "%d/%d" % [stored_amount(storage_res()), storage_capacity()]
 
+# ===================== RUỘNG (farm) =====================
+# Ruộng chứa 1 NODE THỊT con (ResourceNode.setup_farm) — nông dân làm
+# ruộng bằng ĐÚNG cơ chế node thường (tới nơi, harvest theo lượt, vác về
+# kho thịt/thành). Node chỉ BẬT khi ruộng xây xong (hệ thợ xây của main:
+# thợ ra tận nơi đóng búa đủ build_time mới constructed — xem _tick_farm).
+# Ruộng bị phá = node chết theo; ruộng CẠN = TỰ SỤP (silent_destroy)
+# thành đất trống, nằm lại FARM_SPENT_TIME giây rồi biến mất hẳn để đất
+# đó xây lại được.
+const FARM_SPENT_TIME := 4.0
+
+var _farm_node: ResourceNode = null
+var _farm_active: bool = false
+var _farm_stage: int = 2 # giai đoạn cây THẬT: 2 = chín / 1 = lá vừa / 0 = mầm (theo tỉ lệ thịt còn)
+var display_farm_stage: int = 2 # giai đoạn cây theo SNAPSHOT sương mù (Main cập nhật khi ô SÁNG)
+var _spent_left: float = -1.0 # >0: đã cạn tự sụp, đếm ngược tới lúc biến mất hẳn
+var _farm_sign: Sprite2D = null
+var _farm_label: Label = null
+
+## Giai đoạn cây THẬT hiện tại (Main đọc để chụp snapshot sương mù).
+func farm_stage() -> int:
+	return _farm_stage
+
+func _build_farm() -> void:
+	_farm_node = ResourceNode.new()
+	_farm_node.setup_farm(owner_pid, int(Stats.BUILDINGS["farm"]["farm_meat"]))
+	_farm_node.set_harvest_active(false) # xây xong mới farm được
+	add_child(_farm_node)
+	_farm_node.depleted.connect(_on_farm_depleted)
+	# Biển hiệu như kho: icon THỊT trên bảng gỗ ở góc ruộng (bảng vẽ trong
+	# _draw) + nhãn lượng thịt còn trong ruộng "n/250" dưới chân ruộng.
+	_farm_sign = Sprite2D.new()
+	_farm_sign.texture = load(SIGN_ICONS["meat"])
+	_farm_sign.scale = Vector2(0.26, 0.26)
+	_farm_sign.position = Vector2(59, -64)
+	_farm_sign.z_index = 3
+	add_child(_farm_sign)
+	_farm_label = Label.new()
+	_farm_label.position = Vector2(-45, 34)
+	_farm_label.size = Vector2(90, 18)
+	_farm_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_farm_label.add_theme_font_size_override("font_size", 13)
+	_farm_label.add_theme_color_override("font_color", Color(1.0, 0.95, 0.8))
+	_farm_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
+	_farm_label.add_theme_constant_override("shadow_offset_x", 1)
+	_farm_label.add_theme_constant_override("shadow_offset_y", 1)
+	_farm_label.z_index = 3
+	add_child(_farm_label)
+
+func _farm_stage_texture() -> Texture2D:
+	var stage := display_farm_stage if use_snapshot else _farm_stage
+	match stage:
+		2:
+			return load("res://assets/buildings/farm.png")
+		1:
+			return load("res://assets/buildings/farm_mid.png")
+		_:
+			return load("res://assets/buildings/farm_low.png")
+
+## Node thịt cạn -> ruộng TỰ SỤP: không nổ, không cướp gì (không phải
+## kho), hiện đất trống 1 lúc rồi biến mất hẳn (xem _tick_farm).
+func _on_farm_depleted(_node: ResourceNode) -> void:
+	if destroyed:
+		return
+	destroyed = true
+	silent_destroy = true
+	_spent_left = FARM_SPENT_TIME
+	_refresh_display()
+	structure_destroyed.emit(self)
+	queue_redraw()
+
+func _tick_farm(delta: float) -> void:
+	if _spent_left > 0.0:
+		# Đất trống sau khi cạn: đếm ngược rồi biến mất hẳn khỏi map.
+		_spent_left -= delta
+		if _spent_left <= 0.0:
+			queue_free()
+		return
+	if destroyed:
+		# Bị phá bằng đòn đánh: node thịt chết theo ruộng (tàn tích còn
+		# nằm lại như nhà thường nhưng không farm được nữa).
+		if _farm_node != null and is_instance_valid(_farm_node):
+			_farm_node.queue_free()
+		_farm_node = null
+		return
+	if not constructed or _farm_node == null or not is_instance_valid(_farm_node):
+		return
+	if not _farm_active:
+		_farm_active = true
+		_farm_node.set_harvest_active(true)
+	var frac := _farm_node.remaining_fraction()
+	var stage := 2 if frac > 0.66 else (1 if frac > 0.33 else 0)
+	if stage != _farm_stage:
+		_farm_stage = stage
+		_refresh_display()
+	_update_farm_label()
+
+## Biển hiệu + nhãn thịt còn: cùng luật hiện như nhãn kho — ruộng của
+## mình luôn hiện; ruộng địch chỉ lộ số khi đang trong tầm nhìn.
+func _update_farm_label() -> void:
+	if _farm_sign != null:
+		_farm_sign.visible = disp_constructed() and not disp_destroyed()
+	if _farm_label != null:
+		var show := disp_constructed() and not disp_destroyed()
+		if show and main_ref != null and owner_pid != main_ref.HUMAN_PID:
+			show = main_ref.is_pos_visible_for(main_ref.HUMAN_PID, global_position)
+		_farm_label.visible = show
+		if show and _farm_node != null and is_instance_valid(_farm_node):
+			_farm_label.text = "%d/%d" % [_farm_node.amount, _farm_node.max_amount]
+
 ## Dựng cung thủ đứng trên đỉnh tháp: dùng đúng bộ frame Archer của pack
 ## như Unit (idle 6 frame, shoot 8 frame, khung 192px, tỉ lệ 0.5 như quân
 ## thật). Vị trí: chân cung thủ (điểm dưới frame, lệch +40px từ tâm khung)
@@ -199,6 +325,8 @@ func _refresh_display() -> void:
 	if _sprite == null:
 		return
 	_update_sign()
+	if building_type == "farm":
+		_update_farm_label()
 	if disp_destroyed():
 		_sprite.texture = _tex_destroyed
 		_sprite.modulate = Color(0.75, 0.75, 0.75)
@@ -210,7 +338,8 @@ func _refresh_display() -> void:
 			_sprite.texture = _tex_normal
 			_sprite.modulate = Color(1, 1, 1, 0.55)
 	else:
-		_sprite.texture = _tex_normal
+		# Ruộng: texture theo GIAI ĐOẠN cây (snapshot sương mù khi cần).
+		_sprite.texture = _farm_stage_texture() if building_type == "farm" else _tex_normal
 		_sprite.modulate = Color.WHITE
 	# Cung thủ trên tháp: chỉ đứng trên tháp ĐÃ XÂY XONG và còn đứng vững —
 	# đang xây thì chưa có ai, tháp sập thì cung thủ chết theo (biến mất).
@@ -252,6 +381,10 @@ func _process(delta: float) -> void:
 	_update_fire()
 	if is_storage():
 		_update_sign()
+	if building_type == "farm":
+		# Tick ruộng chạy TRƯỚC cổng is_alive: ruộng đã sụp (cạn/bị phá)
+		# vẫn phải dọn node + đếm ngược biến mất.
+		_tick_farm(delta)
 	if not is_alive() or main_ref == null or main_ref.match_over:
 		return
 	if not constructed:
@@ -311,9 +444,15 @@ func _draw() -> void:
 	if is_storage() and disp_constructed() and not disp_destroyed():
 		draw_rect(Rect2(-31, -159, 62, 66), Color(0.55, 0.38, 0.2))
 		draw_rect(Rect2(-28, -156, 56, 60), Color(0.23, 0.15, 0.08))
+	# Bảng gỗ biển hiệu THỊT của ruộng, ở góc trên-phải ô đất.
+	if building_type == "farm" and disp_constructed() and not disp_destroyed():
+		draw_rect(Rect2(42, -82, 34, 38), Color(0.55, 0.38, 0.2))
+		draw_rect(Rect2(45, -79, 28, 32), Color(0.23, 0.15, 0.08))
 	var w := 84.0
 	# Tháp: thanh nằm TRÊN ĐẦU cung thủ đứng nóc (đầu cung thủ ở y ≈ -138).
-	var pos := Vector2(-w / 2.0, -96.0) if building_type != "tower" else Vector2(-w / 2.0, -148.0)
+	# Ruộng: thanh nằm trên mép trên của ô đất (đỉnh sprite ở y ≈ -82).
+	var bar_y := -148.0 if building_type == "tower" else (-94.0 if building_type == "farm" else -96.0)
+	var pos := Vector2(-w / 2.0, bar_y)
 	if not disp_constructed() and not disp_destroyed():
 		# Thanh tiến độ xây.
 		draw_rect(Rect2(pos, Vector2(w, 7)), Color(0, 0, 0, 0.7))

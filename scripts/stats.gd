@@ -186,6 +186,25 @@ const BUILDINGS := {
 		"army_bonus": 6,
 		"size": "large",
 	},
+	# RUỘNG (nông trại): nguồn THỊT chủ động kiểu Đế Chế — thay vì chỉ săn
+	# cừu. Công trình chứa 1 lượng thịt HỮU HẠN (farm_meat): bên trong nó
+	# "mọc" 1 node thịt do chính ruộng làm chủ (xem building.gd), nông dân
+	# làm ruộng đúng như làm 1 điểm tài nguyên thịt, vác về kho thịt/thành.
+	# CẠN -> ruộng TỰ SỤP thành đất trống rồi biến mất hẳn (xây lại từ đầu)
+	# nên giá rẻ (60 gỗ). Đặt qua ĐÚNG luật vị trí hợp nhất
+	# Main.can_place_building_at như mọi nhà (đã khám phá + trên đất +
+	# không chồng lấn) — "free_place" chỉ là dấu hiệu "đặt tự do xa nhà"
+	# cho HUD/bot đọc, luật thật nằm ở Main. Nhà NHỎ: 1 thợ xây.
+	"farm": {
+		"label": "Ruộng",
+		"cost": {"wood": 60},
+		"build_time": 8.0,
+		"hp": 150.0,
+		"radius": 40.0,
+		"farm_meat": 250,
+		"free_place": true,
+		"size": "small",
+	},
 }
 
 # --- Thợ xây (hệ thống xây mới): công trình chỉ tiến triển khi có nông dân

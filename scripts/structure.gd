@@ -22,6 +22,7 @@ var producer_kind: String = "" # "" = không sản xuất | "castle" | "barracks
 # đi qua các điểm tập trung ở Main: deposit_to / spend_resources / cướp kho.
 var stored: Dictionary = {"wood": 0, "stone": 0, "gold": 0, "meat": 0}
 var last_attacker_pid: int = -1 # pid của kẻ gây đòn gần nhất (để tính cướp kho)
+var silent_destroy: bool = false # sập TỰ NHIÊN (ruộng cạn tự sụp): Main bỏ qua vụ nổ khi structure_destroyed phát ra
 
 var train_queue: Array = [] # [{unit_type, time_left, total}]
 

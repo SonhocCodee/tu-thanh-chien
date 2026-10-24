@@ -130,6 +130,12 @@
 
 - `House1/2/3` của Free Pack = 3 cấp nhà dân; `Archery` = trường bắn (chưa có trong game);
   `Monastery` = tu viện (đi với Monk, để dành).
+- **Ruộng (farm)**: KHÔNG có sprite ruộng sẵn trong 2 pack Tiny
+  Swords. Project dùng bản GHÉP ở `assets/buildings/farm.png` / `farm_mid.png` /
+  `farm_low.png` / `farm_bare.png` (sinh bởi `tools/make_farm_art.py`): đất = tile
+  cỏ `assets/terrain/tilemap.png` (1,1) nhuộm nâu giữ texture; cây = Farm RPG FREE
+  demo (Maeve) `Objects/Spring Crops.png` theo giai đoạn mầm/lá/chín khớp tỉ lệ
+  thịt còn trong ruộng.
 
 ## 6. Địa hình (Terrain) và trang trí (Decorations)
 

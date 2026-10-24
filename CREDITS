@@ -14,4 +14,11 @@ Game "Tứ Thành Chiến — Đế Chế 4 Phe" dùng bộ asset "Tiny Swords" 
    - House_Destroyed.png, Tower_Destroyed.png, House_Construction.png, Tower_Construction.png.
    - Mỏ vàng GoldMine_Active.png, mỏ đá M_Idle.png (thư mục Resources).
 
-Mọi hình ảnh trong thư mục assets/ đều chép từ 2 nguồn trên, không tự vẽ.
+3) "Farm RPG FREE 16x16 - Tiny Asset Pack" của Maeve (bản demo miễn phí):
+   - Sprite cây trồng theo giai đoạn sinh trưởng (Objects/Spring Crops.png)
+     dùng cho RUỘNG (assets/buildings/farm*.png): cây chép nguyên bản;
+     phần ĐẤT là tile cỏ Tiny Swords nhuộm màu nâu bằng script
+     (tools/make_farm_art.py) — đây là ngoại lệ "ghép/nhuộm từ asset có
+     sẵn", không phải vẽ mới hoàn toàn.
+
+Ngoài mục 3, mọi hình ảnh trong thư mục assets/ đều chép từ 2 nguồn trên, không tự vẽ.
