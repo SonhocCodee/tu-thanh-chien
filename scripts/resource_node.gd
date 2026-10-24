@@ -27,7 +27,11 @@ var _is_stump: bool = false # cây đã cạn -> chỉ còn gốc
 var _rubble_left: float = -1.0 # >0: đang là đống đổ nát của mỏ, đếm ngược để biến mất
 var _falling: bool = false
 # Port từ nhánh AI: rung khi bị khai thác + đếm ngược MỌC LẠI của cây.
+# _shake_total/_shake_amp: thông số của cú rung HIỆN TẠI (cây rung mạnh và
+# lâu hơn đá/vàng — xem _start_shake).
 var _shake_left: float = 0.0
+var _shake_total: float = 0.25
+var _shake_amp: float = 4.0
 var _regen_left: float = -1.0 # >0 khi đang là gốc chờ mọc lại (chỉ cây, regen_time=90s)
 var _spr_base_pos: Vector2 = Vector2.ZERO
 var _rng := RandomNumberGenerator.new()
@@ -137,14 +141,35 @@ func state_name() -> String:
 		return "destroyed" if res_type == "gold" else "gone"
 	return "ready"
 
+## Bắt đầu 1 cú rung: cây rung MẠNH (~4px, 0.25s) cho đọc rõ từ xa; đá/vàng/
+## thịt rung YẾU như cũ (2.2px, 0.12s).
+func _start_shake() -> void:
+	if res_type == "wood":
+		_shake_total = 0.25
+		_shake_amp = 4.0
+	else:
+		_shake_total = 0.12
+		_shake_amp = 2.2
+	_shake_left = _shake_total
+
+## Phản hồi hình ảnh MỖI NHÁT vung trúng (KHÔNG lấy tài nguyên, không đổi
+## kinh tế): nông dân gọi theo nhịp vung trong lúc đang chặt để cây/đá rung
+## THEO NHỊP ĐẬP. Trước đây rung chỉ gán trong take_harvest ở CUỐI lượt 3s
+## nên suốt lúc chặt cây đứng im, chặt xong nông dân quay đi mới rung 1 cái
+## yếu ớt (user báo từ chơi thật 2026-10-24).
+func notify_hit() -> void:
+	if _depleted or _sprite == null:
+		return
+	_start_shake()
+
 ## Nông dân kết thúc 1 lượt khai thác: lấy tối đa `capacity`, trả số lấy được.
 func take_harvest(capacity: int) -> int:
 	if _depleted or amount <= 0:
 		return 0
 	var take := mini(capacity, amount)
 	amount -= take
-	# Bị chặt/đào: rung nhẹ (đá rung yếu hơn cây) — port từ nhánh AI.
-	_shake_left = 0.22 if res_type == "wood" else 0.12
+	# Kết lượt cũng rung 1 cú (cùng thông số với notify_hit).
+	_start_shake()
 	if res_type == "stone" or (res_type == "gold" and not is_big):
 		_update_size_by_amount()
 	if res_type == "stone" and _sprite != null:
@@ -307,7 +332,7 @@ func _process(delta: float) -> void:
 	# Rung khi bị khai thác (chỉ khi điểm còn farm được).
 	if _shake_left > 0.0 and _sprite != null and not _depleted:
 		_shake_left -= delta
-		var amp := 2.2 * clampf(_shake_left / 0.22, 0.0, 1.0)
+		var amp := _shake_amp * clampf(_shake_left / maxf(_shake_total, 0.01), 0.0, 1.0)
 		_sprite.position = _spr_base_pos + Vector2(_rng.randf_range(-amp, amp), 0)
 		if _shake_left <= 0.0:
 			_sprite.position = _spr_base_pos

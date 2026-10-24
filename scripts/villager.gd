@@ -10,6 +10,10 @@ extends Node2D
 ## thành, nhận phân bổ mới thì đi tiếp.
 
 const FRAME := 192.0
+# Nhịp báo "1 nhát vung trúng" vào điểm tài nguyên để nó RUNG theo nhịp đập
+# trong lúc chặt (anim vung = 6 frame @10fps -> 1 vòng 0.6s; lấy 0.5s cho
+# khớp tương đối và dồn dập hơn chút).
+const HIT_INTERVAL := 0.5
 
 var owner_pid: int = -1
 var color_key: String = "blue"
@@ -37,6 +41,7 @@ var _node: Node2D = null
 var _sheep: Sheep = null
 var _dropoff: Node2D = null # kho đang hướng về (thành chính / Nhà Kho) — test đọc được
 var _harvest_left: float = 0.0
+var _hit_left: float = 0.3 # đếm ngược tới nhát vung trúng kế (rung cây)
 var _anim: AnimatedSprite2D
 var _cur_anim: String = ""
 
@@ -418,6 +423,12 @@ func _step_harvest(delta: float) -> void:
 		return
 	_play(harvest_anim())
 	_face(_node.global_position)
+	# Cây/đá phải RUNG THEO NHỊP VUNG ngay trong lúc chặt, không chờ cuối
+	# lượt 3s mới rung (lỗi user báo: chặt thì không rung, bê gỗ đi mới rung).
+	_hit_left -= delta
+	if _hit_left <= 0.0:
+		_hit_left = HIT_INTERVAL
+		(_node as ResourceNode).notify_hit()
 	_harvest_left -= delta
 	if _harvest_left <= 0.0:
 		var take: int = (_node as ResourceNode).take_harvest(int(st["carry_capacity"]))
