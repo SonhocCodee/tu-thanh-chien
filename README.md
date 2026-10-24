@@ -5,8 +5,9 @@ xây Nhà Dân/Doanh Trại/Tháp Canh, huấn luyện quân, cử quân mở s�
 thành địch và tổng tấn công. Phá thành chính của cả 3 phe địch = thắng.
 
 ## Cách chạy
-- Chơi bản web: mở thư mục `build/web/` qua 1 máy chủ tĩnh bất kỳ (vd `python3 -m http.server` trong thư mục đó) rồi vào `index.html`. Preset Web đã **tắt hỗ trợ đa luồng** nên chạy trên host tĩnh thông thường.
+- Chơi bản web: mở thư mục `build/web/` qua 1 máy chủ tĩnh bất kỳ (vd `python3 -m http.server` trong thư mục đó) rồi vào `index.html`. Preset Web đã **tắt hỗ trợ đa luồng** (`variant/thread_support=false`) nên bản web là biến thể đơn luồng, chạy trên host tĩnh thông thường — không cần header COOP/COEP.
 - Chạy trong Godot 4.2.2: mở `project.godot` → F5.
+- ⚠️ **Xuất bản Web phải dùng Godot 4.3 trở lên.** Godot 4.2.2 không hề đọc tùy chọn `variant/thread_support` (tùy chọn này chỉ có từ 4.3): plugin xuất web của 4.2.2 không khai báo/không dùng khóa đó, và template web của 4.2.2 chỉ có đúng một biến thể đa luồng (wasm import bộ nhớ dạng shared, bắt buộc SharedArrayBuffer + Cross-Origin Isolation). Hệ quả: xuất bằng 4.2.2 thì dù preset ghi `false`, bản ra vẫn là đa luồng và game báo lỗi thiếu tính năng trên host tĩnh thường. Bản `build/web/` hiện tại được xuất bằng Godot 4.3 (template `web_nothreads_release.zip`), đã kiểm chứng bằng file: không tạo `WebAssembly.Memory` dạng shared, `index.html` mang `GODOT_THREADS_ENABLED = false`, bước kiểm tra tính năng không đòi Cross-Origin Isolation/SharedArrayBuffer, và mọi file đều tải 200 qua `python3 -m http.server` thuần.
 - Chế độ demo tự chơi (để chụp ảnh kiểm chứng): chạy game với tham số `-- --demo`.
 
 ## Cách chơi
