@@ -38,16 +38,19 @@ const BUILD_DESC := {
 	"barracks": "Nơi luyện kiếm sĩ và cung thủ, tốc độ nhanh hơn thành chính.",
 	"tower": "Tháp tự bắn tên vào địch trong tầm.",
 	"storehouse": "Điểm giao tài nguyên — đặt gần bãi farm để dân khỏi đi xa.",
+	"soldier_house": "Tăng GIỚI HẠN QUÂN +6 ô. Không luyện quân — phá nhà này là quân đông bị kẹt không luyện thêm được.",
 }
 const UNIT_ART := {
 	"pawn": "res://assets/units/%s/pawn_idle.png",
 	"warrior": "res://assets/units/%s/warrior_idle.png",
 	"archer": "res://assets/units/%s/archer_idle.png",
+	"lancer": "res://assets/units/%s/lancer_idle.png",
 }
 const UNIT_DESC := {
 	"pawn": "Thu thập tài nguyên, xây dựng.",
 	"warrior": "Quân cận chiến, máu cao.",
 	"archer": "Quân tầm xa, máu thấp.",
+	"lancer": "Tinh nhuệ cầm giáo dài, trâu và đâm xa — chiếm 2 ô quân.",
 }
 const PRODUCER_LABELS := {"castle": "Thành chính", "barracks": "Doanh trại"}
 const TAB_TITLES := ["XÂY DỰNG", "HUẤN LUYỆN", "DÂN & PHÂN BỔ"]
@@ -63,6 +66,9 @@ const UNIT_FRAME_REGIONS := {
 	"pawn": Rect2(61, 42, 68, 99),
 	"warrior": Rect2(54, 26, 95, 117),
 	"archer": Rect2(50, 26, 86, 116),
+	# Lancer: sheet frame 320 (không phải 192) — vùng đo từ alpha frame 0
+	# của lancer_idle blue (115,48)-(184,198).
+	"lancer": Rect2(115, 48, 69, 150),
 }
 const CARD_SIZE := Vector2(122, 100)
 
@@ -78,6 +84,7 @@ var _res_chips: HBoxContainer
 var _res_value_labels: Dictionary = {}
 var _res_keys_shown: Array = []
 var _pop_label: Label
+var _army_label: Label
 var _clock_label: Label
 var _stance_label: Label
 var _msg_label: Label
@@ -279,6 +286,21 @@ func _build_pill() -> void:
 	pop_box.add_child(pop_icon)
 	_pop_label = _mk_label(pop_box, "0/0", 17, COL_TEXT_DARK)
 	_pop_label.tooltip_text = "Dân số"
+	_pill_row.add_child(VSeparator.new())
+	# Giới hạn quân (army cap): icon kiếm sĩ + "ô đã dùng/ô tối đa" —
+	# tách khỏi dân số, tăng bằng Nhà Lính (đọc thẳng từ game.army_*).
+	var army_box := HBoxContainer.new()
+	army_box.add_theme_constant_override("separation", 4)
+	_pill_row.add_child(army_box)
+	var army_icon := TextureRect.new()
+	army_icon.texture = _unit_frame_tex(UNIT_ART["warrior"] % _faction(), "warrior")
+	army_icon.custom_minimum_size = Vector2(26, 26)
+	army_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	army_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	army_icon.tooltip_text = "Giới hạn quân (ô)"
+	army_box.add_child(army_icon)
+	_army_label = _mk_label(army_box, "0/0 ô", 17, COL_TEXT_DARK)
+	_army_label.tooltip_text = "Giới hạn quân (ô) — tăng bằng Nhà Lính"
 	_pill_row.add_child(VSeparator.new())
 	_clock_label = _mk_label(_pill_row, "00:00", 17, COL_TEXT_DARK)
 	_clock_label.tooltip_text = "Thời gian trận"
@@ -902,8 +924,18 @@ func _producer_node(producer: String) -> Structure:
 
 func _on_train_pressed(producer: String, utype: String) -> void:
 	var node := _producer_node(producer)
-	if node != null:
-		ctrl.queue_training(node, utype)
+	if node == null:
+		return
+	# Bị chặn bởi GIỚI HẠN thì báo rõ kẹt ở đâu (quân hay dân số) — cùng
+	# câu chữ với đường exec_queue_training trong main.gd.
+	var block: String = game.cap_block_reason(0, utype)
+	if block == "army":
+		show_message("Đã đạt GIỚI HẠN QUÂN %d/%d ô — xây thêm NHÀ LÍNH để tăng!" % [game.army_used(0), game.army_cap(0)])
+		return
+	if block == "pop":
+		show_message("Đã đạt GIỚI HẠN DÂN SỐ %d/%d — xây thêm NHÀ DÂN để tăng!" % [game.pop_used(0), game.pop_cap(0)])
+		return
+	ctrl.queue_training(node, utype)
 
 func _on_alloc(res_key: String, delta_sign: int) -> void:
 	var p := ctrl.player
@@ -923,7 +955,9 @@ func _can_train(producer: Structure, unit_type: String) -> bool:
 	var p := ctrl.player
 	if not p.can_afford(Stats.TRAINING[unit_type]["cost"]):
 		return false
-	if game.pop_used(0) + 1 > game.pop_cap(0):
+	# Kẹt giới hạn (quân theo Ô hoặc dân số theo Ô) -> thẻ mờ; lý do cụ
+	# thể nằm ở cap_block_reason, dùng chung với exec_queue_training.
+	if game.cap_block_reason(0, unit_type) != "":
 		return false
 	return producer != null and producer.can_produce()
 
@@ -951,6 +985,7 @@ func _process(delta: float) -> void:
 	for k in _res_value_labels.keys():
 		(_res_value_labels[k] as Label).text = str(int(p.resources.get(k, 0)))
 	_pop_label.text = "%d/%d" % [game.pop_used(0), game.pop_cap(0)]
+	_army_label.text = "%d/%d ô" % [game.army_used(0), game.army_cap(0)]
 	var t := int(game.elapsed)
 	_clock_label.text = "%02d:%02d" % [t / 60, t % 60]
 	match p.stance:

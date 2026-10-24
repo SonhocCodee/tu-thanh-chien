@@ -53,6 +53,13 @@ func _ready() -> void:
 			_tex_normal = load("res://assets/buildings/storehouse_%s.png" % color_key)
 			_tex_destroyed = load("res://assets/buildings/house_destroyed.png")
 			_tex_construction = load("res://assets/buildings/house_construction.png")
+		"soldier_house":
+			# Nhà Lính: sprite House3 của Free Pack theo màu phe (ASSETS.md §5;
+			# House1 = nhà dân, House2 = nhà kho nên House3 là biến thể nhà
+			# còn trống duy nhất). Đang xây / tàn tích dùng chung bộ nhà dân.
+			_tex_normal = load("res://assets/buildings/soldier_house_%s.png" % color_key)
+			_tex_destroyed = load("res://assets/buildings/house_destroyed.png")
+			_tex_construction = load("res://assets/buildings/house_construction.png")
 	_sprite = Sprite2D.new()
 	match building_type:
 		"house":
@@ -67,6 +74,10 @@ func _ready() -> void:
 		"storehouse":
 			_sprite.scale = Vector2(0.6, 0.6)
 			_sprite.position = Vector2(0, -30)
+		"soldier_house":
+			# House3 cùng cỡ canvas 128x192 với House1 (nhà dân) -> cùng tỉ lệ.
+			_sprite.scale = Vector2(0.55, 0.55)
+			_sprite.position = Vector2(0, -28)
 	add_child(_sprite)
 	_make_fire()
 	_refresh_display()

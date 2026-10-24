@@ -50,6 +50,7 @@ const GHOST_PRESENT := {
 	"barracks": [0.5, -38.0],
 	"tower": [0.45, -52.0],
 	"storehouse": [0.6, -30.0],
+	"soldier_house": [0.55, -28.0],
 }
 
 # --- Con trỏ ngữ cảnh khi di chuột (hover) ---
@@ -75,6 +76,9 @@ var _m2demo_timer: float = 0.0
 var g2demo_mode: bool = false
 var _g2demo_stage: int = 0
 var _g2demo_timer: float = 0.0
+var popdemo_mode: bool = false
+var _popdemo_stage: int = 0
+var _popdemo_timer: float = 0.0
 var _g2_tree: ResourceNode = null
 var _g2_hunter: Villager = null
 var _g2_store: Building = null
@@ -104,6 +108,10 @@ func _ready() -> void:
 		Engine.time_scale = 3.0
 	if "--g2demo" in args:
 		g2demo_mode = true
+		bots_enabled = false
+		Engine.time_scale = 3.0
+	if "--popdemo" in args:
+		popdemo_mode = true
 		bots_enabled = false
 		Engine.time_scale = 3.0
 	_build_players()
@@ -145,6 +153,8 @@ func _process(delta: float) -> void:
 		_demo_m2_update(delta)
 	if g2demo_mode:
 		_demo_g2_update(delta)
+	if popdemo_mode:
+		_demo_pop_update(delta)
 
 # ===================== DỰNG BAN ĐẦU =====================
 
@@ -416,7 +426,7 @@ func _build_hud() -> void:
 	_hud.setup(self, human_controller())
 	add_child(_hud)
 	# Panel hướng dẫn tự mở khi vào trận (trừ chế độ demo chụp ảnh).
-	if not demo_mode and not m2demo_mode and not g2demo_mode:
+	if not demo_mode and not m2demo_mode and not g2demo_mode and not popdemo_mode:
 		_hud.show_help()
 
 # ===================== SƯƠNG MÙ =====================
@@ -571,6 +581,7 @@ func build_slots(pid: int) -> Array:
 		c + Vector2(mx * 30, my * -102),
 		c + Vector2(mx * 30, my * 102),
 		c + Vector2(mx * -175, 0), # ô cho Nhà Kho (đặt ngoài vùng căn cứ cũng được)
+		c + Vector2(mx * -40, my * 110), # ô cho Nhà Lính (cách ô 3 ~70px, ô 1 ~72px, trong vùng căn cứ)
 	]
 
 ## Luật đặt nhà DÙNG CHUNG — 1 nguồn luật duy nhất cho click đặt thật
@@ -624,7 +635,15 @@ func exec_queue_training(player: PlayerState, building: Structure, unit_type: St
 	var def: Dictionary = Stats.TRAINING[unit_type]
 	if not player.can_afford(def["cost"]):
 		return false
-	if pop_used(player.pid) + 1 > pop_cap(player.pid):
+	# HAI giới hạn cùng áp: giới hạn quân (army cap, theo Ô) cho lính và
+	# dân số chung (theo Ô) cho mọi đơn vị. Kẹt ở đâu báo rõ ở đó.
+	var block := cap_block_reason(player.pid, unit_type)
+	if block != "":
+		if player.pid == HUMAN_PID and _hud != null:
+			if block == "army":
+				_hud.show_message("Đã đạt GIỚI HẠN QUÂN %d/%d ô — xây thêm NHÀ LÍNH để tăng!" % [army_used(player.pid), army_cap(player.pid)])
+			else:
+				_hud.show_message("Đã đạt GIỚI HẠN DÂN SỐ %d/%d — xây thêm NHÀ DÂN để tăng!" % [pop_used(player.pid), pop_cap(player.pid)])
 		return false
 	player.pay(def["cost"])
 	building.enqueue(unit_type, float(def["time"]) / float(prod["speed"]))
@@ -884,12 +903,63 @@ func pop_cap(pid: int) -> int:
 	return cap
 
 func pop_used(pid: int) -> int:
-	var used := villager_count(pid) + military_count(pid)
+	# Dân số tính theo Ô (pop_cost): nông dân 1 ô, lính thường 1 ô, tinh
+	# nhuệ 2 ô. Quân đang trong hàng chờ cũng giữ ô ngay từ lúc bấm luyện.
+	var used := villager_count(pid) * Stats.pop_cost("pawn")
+	for n in get_tree().get_nodes_in_group("units"):
+		var u := n as Unit
+		if u.owner_pid == pid and u.is_alive():
+			used += Stats.pop_cost(u.unit_type)
 	for n in get_tree().get_nodes_in_group("structures"):
 		var s := n as Structure
 		if s.owner_pid == pid:
-			used += s.queue_count()
+			for item in s.train_queue:
+				used += Stats.pop_cost(item["unit_type"])
 	return used
+
+## Giới hạn quân (army cap) — TÁCH khỏi dân số: nền army_base + mỗi
+## Nhà Lính đã xây xong cộng army_bonus ô. Chỉ tính QUÂN (không tính dân).
+func army_cap(pid: int) -> int:
+	var cap := int(Stats.ECONOMY["army_base"])
+	var bonus := int(Stats.BUILDINGS["soldier_house"]["army_bonus"])
+	for n in get_tree().get_nodes_in_group("buildings"):
+		var b := n as Building
+		if b.owner_pid == pid and b.building_type == "soldier_house" and b.constructed and b.is_alive():
+			cap += bonus
+	return cap
+
+## Ô quân đã dùng: quân đang sống + quân đang chờ luyện (theo pop_cost).
+func army_used(pid: int) -> int:
+	var used := 0
+	for n in get_tree().get_nodes_in_group("units"):
+		var u := n as Unit
+		if u.owner_pid == pid and u.is_alive():
+			used += Stats.pop_cost(u.unit_type)
+	for n in get_tree().get_nodes_in_group("structures"):
+		var s := n as Structure
+		if s.owner_pid == pid:
+			for item in s.train_queue:
+				if Stats.is_military(item["unit_type"]):
+					used += Stats.pop_cost(item["unit_type"])
+	return used
+
+func unit_type_count(pid: int, unit_type: String) -> int:
+	var c := 0
+	for n in get_tree().get_nodes_in_group("units"):
+		var u := n as Unit
+		if u.owner_pid == pid and u.unit_type == unit_type and u.is_alive():
+			c += 1
+	return c
+
+## Lý do bị chặn bởi GIỚI HẠN (chưa xét tài nguyên/nơi sản xuất):
+## "" = không kẹt | "army" = kẹt giới hạn quân | "pop" = kẹt dân số chung.
+func cap_block_reason(pid: int, unit_type: String) -> String:
+	var cost := Stats.pop_cost(unit_type)
+	if Stats.is_military(unit_type) and army_used(pid) + cost > army_cap(pid):
+		return "army"
+	if pop_used(pid) + cost > pop_cap(pid):
+		return "pop"
+	return ""
 
 func villager_count(pid: int) -> int:
 	return _villagers_of(pid).size()
@@ -909,7 +979,7 @@ func _villagers_of(pid: int) -> Array:
 	return out
 
 func building_counts(pid: int) -> Dictionary:
-	var counts := {"house": 0, "barracks": 0, "tower": 0, "storehouse": 0}
+	var counts := {"house": 0, "barracks": 0, "tower": 0, "storehouse": 0, "soldier_house": 0}
 	for n in get_tree().get_nodes_in_group("buildings"):
 		var b := n as Building
 		if b.owner_pid == pid and b.is_alive():
@@ -1485,6 +1555,74 @@ func _demo_m2_update(delta: float) -> void:
 				_take_shot("res://screenshots/m2_suong_mu_mo.png")
 				_m2demo_stage = 13
 		13:
+			get_tree().quit()
+
+# ===================== DEMO NHÀ LÍNH (chạy với -- --popdemo, không bot) ====
+# Sân khấu chụp ảnh: Nhà Lính cạnh Doanh trại -> hàng Lính giáo + Kiếm sĩ
+# -> điền đầy ô quân và cố luyện thêm để HUD báo kẹt GIỚI HẠN QUÂN.
+
+func _demo_pop_update(delta: float) -> void:
+	if elapsed > 200.0:
+		get_tree().quit()
+		return
+	var p0: PlayerState = players[HUMAN_PID]
+	var ctrl := human_controller()
+	match _popdemo_stage:
+		0:
+			for k in Stats.RES_KEYS:
+				p0.resources[k] = 9000
+			var slots := build_slots(HUMAN_PID)
+			exec_place_building(p0, "house", slots[0])
+			exec_place_building(p0, "barracks", slots[1])
+			exec_place_building(p0, "soldier_house", slots[5])
+			for n in get_tree().get_nodes_in_group("buildings"):
+				var b := n as Building
+				if b.owner_pid == HUMAN_PID:
+					b.constructed = true # sân khấu: coi như xây xong ngay
+					b._refresh_display()
+			set_camera_to(CASTLE_POS[HUMAN_PID] + Vector2(60, -60))
+			_popdemo_timer = 0.8
+			_popdemo_stage = 1
+		1:
+			_popdemo_timer -= delta
+			if _popdemo_timer <= 0.0:
+				_take_shot("res://screenshots/pop_nha_linh.png")
+				_popdemo_stage = 2
+		2:
+			# Hàng quân xen kẽ giáo/kiếm trên bãi cỏ trống dưới thành: gán
+			# slot_offset để quân tự về đứng đúng hàng (điểm tập kết +
+			# slot_offset), giáo dài nhìn khác hẳn kiếm.
+			var kinds := ["lancer", "warrior", "lancer", "warrior", "lancer"]
+			for kind in kinds:
+				spawn_trained_unit(HUMAN_PID, kind, castles[HUMAN_PID])
+			var rally := rally_point(HUMAN_PID)
+			var idx := 0
+			for n in get_tree().get_nodes_in_group("units"):
+				var u := n as Unit
+				if u.owner_pid == HUMAN_PID:
+					u.slot_offset = Vector2(200 + idx * 50, -80) - (rally - CASTLE_POS[HUMAN_PID])
+					u.global_position = rally + u.slot_offset # đứng ngay vào hàng
+					idx += 1
+			_popdemo_timer = 0.6
+			_popdemo_stage = 3
+		3:
+			_popdemo_timer -= delta
+			if _popdemo_timer <= 0.0:
+				_take_shot("res://screenshots/pop_lancer.png")
+				_popdemo_stage = 4
+		4:
+			# Điền đầy ô quân rồi cố luyện thêm -> HUD hiện thông báo kẹt.
+			while army_used(HUMAN_PID) + 1 <= army_cap(HUMAN_PID):
+				spawn_trained_unit(HUMAN_PID, "warrior", castles[HUMAN_PID])
+			ctrl.queue_training(castles[HUMAN_PID], "warrior")
+			_popdemo_timer = 0.4
+			_popdemo_stage = 5
+		5:
+			_popdemo_timer -= delta
+			if _popdemo_timer <= 0.0:
+				_take_shot("res://screenshots/pop_ket_quan.png")
+				_popdemo_stage = 6
+		6:
 			get_tree().quit()
 
 # ===================== DEMO GIAI ĐOẠN 2 (chạy với -- --g2demo, không bot) ====

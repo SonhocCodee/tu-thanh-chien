@@ -42,21 +42,54 @@ const UNITS := {
 		"bounty": 0,
 		"projectile_speed": 430.0,
 	},
+	# Lính giáo — TINH NHUỆ đầu tiên: chiếm 2 ô quân (xem TRAINING.pop_cost).
+	# Mạnh hơn hẳn kiếm sĩ từng con: máu 220 (gần gấp đôi 130), đòn 21/1,05s
+	# (DPS ~20 so với ~15,6), tầm đánh 55 nhờ giáo dài (kiếm 36) nên chạm
+	# địch trước; đổi lại mỗi con ăn 2 ô nên tính theo ô thì thua 2 kiếm sĩ
+	# về DPS — vai trò là tấm khiên sống tuyến đầu, không phải thay thế kiếm.
+	"lancer": {
+		"label": "Lính giáo",
+		"hp": 220.0,
+		"damage": 21.0,
+		"speed": 68.0,
+		"attack_range": 55.0,
+		"detect_range": 200.0,
+		"attack_cooldown": 1.05,
+		"damage_type": "vat_ly",
+		"armor_type": "nhe",
+		"bounty": 0,
+		"projectile_speed": 0.0,
+	},
 }
 
 # --- Huấn luyện: giá tài nguyên + thời gian, theo từng đơn vị ---
 # M2 giai đoạn 2: nông dân tốn THỊT (săn cừu) thay cho 50 vàng như M1;
 # quân vẫn tốn vàng/gỗ như cũ.
+# pop_cost = số Ô chiếm chỗ: tính CẢ vào dân số chung LẪN giới hạn quân
+# (army cap) nếu là quân (military=true). Lính thường 1 ô, tinh nhuệ 2 ô.
 const TRAINING := {
-	"pawn": {"cost": {"meat": 50}, "time": 6.0},
-	"warrior": {"cost": {"gold": 80}, "time": 9.0},
-	"archer": {"cost": {"gold": 70, "wood": 30}, "time": 11.0},
+	"pawn": {"cost": {"meat": 50}, "time": 6.0, "pop_cost": 1, "military": false},
+	"warrior": {"cost": {"gold": 80}, "time": 9.0, "pop_cost": 1, "military": true},
+	"archer": {"cost": {"gold": 70, "wood": 30}, "time": 11.0, "pop_cost": 1, "military": true},
+	# Lính giáo: giá ~1,9 lần kiếm sĩ (150 vàng + 30 gỗ), luyện 16s ở
+	# doanh trại (tốc độ 1,4 -> ~11,4s thực). Chỉ cần Doanh trại + còn ô.
+	"lancer": {"cost": {"gold": 150, "wood": 30}, "time": 16.0, "pop_cost": 2, "military": true},
 }
 # Nơi sản xuất đẻ được quân gì; barracks_speed = hệ số tốc độ huấn luyện ở doanh trại (>1 = nhanh hơn).
 const PRODUCERS := {
 	"castle": {"units": ["pawn", "warrior"], "speed": 1.0},
-	"barracks": {"units": ["warrior", "archer"], "speed": 1.4},
+	"barracks": {"units": ["warrior", "archer", "lancer"], "speed": 1.4},
 }
+
+static func pop_cost(unit_type: String) -> int:
+	if TRAINING.has(unit_type):
+		return int(TRAINING[unit_type].get("pop_cost", 1))
+	return 1
+
+static func is_military(unit_type: String) -> bool:
+	if TRAINING.has(unit_type):
+		return bool(TRAINING[unit_type].get("military", false))
+	return false
 
 # --- Công trình: giá / thời gian xây / máu / bán kính ---
 const BUILDINGS := {
@@ -95,6 +128,19 @@ const BUILDINGS := {
 		"hp": 300.0,
 		"radius": 40.0,
 	},
+	# Nhà Lính: KHÔNG luyện quân — chức năng duy nhất là tăng GIỚI HẠN QUÂN
+	# (army cap) thêm army_bonus ô. Army cap tách khỏi dân số chung: quân
+	# đông tới đâu do Nhà Lính quyết, dân số chung do Nhà Dân quyết.
+	# Phá 1 Nhà Lính -> cap tụt army_bonus; quân đang có KHÔNG chết theo,
+	# chỉ không luyện thêm được tới khi số ô quay xuống dưới cap.
+	"soldier_house": {
+		"label": "Nhà Lính",
+		"cost": {"wood": 100},
+		"build_time": 12.0,
+		"hp": 300.0,
+		"radius": 42.0,
+		"army_bonus": 6,
+	},
 }
 
 # --- Thành chính ---
@@ -113,6 +159,10 @@ const ECONOMY := {
 	"start_villagers": 3,
 	"pop_base": 10,
 	"pop_per_house": 8,
+	# Giới hạn quân nền (chưa có Nhà Lính nào): 6 ô — đủ thủ nhà + trinh
+	# sát đầu trận, nhưng đạo quân tổng tấn công chuẩn (8 quân) bắt buộc
+	# phải xây Nhà Lính (+6 ô/nhà). Ép Nhà Lính thành 1 mắt xích kinh tế.
+	"army_base": 6,
 }
 
 # --- Tài nguyên HỮU HẠN (M2 giai đoạn 2): trữ lượng từng điểm trên map ---
@@ -202,6 +252,7 @@ const FOG := {
 		"building": 130.0,
 		"archer": 195.0,
 		"warrior": 165.0,
+		"lancer": 185.0,
 		"pawn": 120.0,
 	},
 }
