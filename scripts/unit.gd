@@ -27,9 +27,18 @@ var _cur_anim: String = ""
 
 # M2: chọn quân + lệnh trực tiếp (ưu tiên hơn thái độ chung, tới khi xong).
 var selected: bool = false
-var direct_mode: String = "" # "" | "move" | "attack_unit" | "attack_struct"
+var direct_mode: String = "" # "" | "move" | "attack_unit" | "attack_struct" | "attack_move" | "patrol" | "guard"
 var direct_point: Vector2 = Vector2.ZERO
 var direct_target: Node = null
+
+# RTS nâng cao (Team 5): attack-move nhớ điểm XUẤT PHÁT (am_from) để neo
+# leash theo đoạn đường đi; tuần tra qua lại A (patrol_a = vị trí lúc ra
+# lệnh) <-> B (direct_point); hộ vệ bám guard_target (Unit/Structure đồng
+# minh). Mọi lệnh mới đều bị huỷ bởi clear_direct() như lệnh trực tiếp cũ.
+var am_from: Vector2 = Vector2.ZERO
+var patrol_a: Vector2 = Vector2.ZERO
+var patrol_to_b: bool = true
+var guard_target: Node = null
 
 # AI (Stats.UNIT_AI): chọn mục tiêu theo NHỊP NGHĨ lệch pha (không quét mỗi
 # frame), giữ mục tiêu giữa các nhịp; tách đàn cũng tính theo nhịp thưa.
@@ -53,6 +62,7 @@ func set_direct_move(point: Vector2) -> void:
 	direct_mode = "move"
 	direct_point = point
 	direct_target = null
+	guard_target = null
 
 func set_direct_attack(target: Node) -> void:
 	if target is Unit:
@@ -62,10 +72,38 @@ func set_direct_attack(target: Node) -> void:
 	else:
 		return
 	direct_target = target
+	guard_target = null
+
+## Đánh-di-chuyển: đi tới point, tự đánh mọi địch THẤY ĐƯỢC trên đường;
+## tới nơi thì GIỮ ĐIỂM ở đó (lệnh vẫn hiệu lực, tiếp tục quét địch).
+func set_attack_move(point: Vector2) -> void:
+	direct_mode = "attack_move"
+	am_from = global_position
+	direct_point = point
+	direct_target = null
+	guard_target = null
+
+## Tuần tra: qua lại giữa vị trí HIỆN TẠI (A) và point (B) vô hạn tới khi
+## có lệnh khác. Đánh địch thấy được dọc tuyến như attack-move.
+func set_patrol(point_b: Vector2) -> void:
+	direct_mode = "patrol"
+	patrol_a = global_position
+	direct_point = point_b
+	patrol_to_b = true
+	direct_target = null
+	guard_target = null
+
+## Hộ vệ: bám theo đối tượng đồng minh (Main đã kiểm tra hợp lệ), đánh
+## địch áp sát nó. Đối tượng mất -> chuyển giữ điểm tại chỗ (xem _step_guard).
+func set_guard(target: Node) -> void:
+	direct_mode = "guard"
+	guard_target = target
+	direct_target = null
 
 func clear_direct() -> void:
 	direct_mode = ""
 	direct_target = null
+	guard_target = null
 
 func setup(p_owner: int, p_type: String, p_color: String, p_main: Node, p_slot: Vector2) -> void:
 	owner_pid = p_owner
@@ -187,6 +225,21 @@ func _process(delta: float) -> void:
 			_separate(delta)
 			queue_redraw()
 			return
+	if direct_mode == "attack_move":
+		_step_attack_move(player, delta)
+		_separate(delta)
+		queue_redraw()
+		return
+	if direct_mode == "patrol":
+		_step_patrol(player, delta)
+		_separate(delta)
+		queue_redraw()
+		return
+	if direct_mode == "guard":
+		_step_guard(player, delta)
+		_separate(delta)
+		queue_redraw()
+		return
 	if direct_mode == "move":
 		if global_position.distance_to(direct_point) > 16.0:
 			_move_toward(direct_point + slot_offset * 0.5, delta)
@@ -275,10 +328,32 @@ func _can_see(pos: Vector2) -> bool:
 		return (main_ref.fogs[owner_pid] as FogOfWar).is_visible_pos(pos)
 	return true
 
-## Neo giữ khoảng (leash) theo ngữ cảnh: lệnh trực tiếp + tổng tấn công = không
-## neo (người chơi đã ra lệnh rõ); giữ nhà = neo THÀNH; đi điểm = neo điểm lệnh.
+## Điểm trên ĐOẠN a-b gần vị trí quân nhất — neo leash "trượt" cho
+## attack-move/tuần tra: vòng giữ bám theo tuyến đường nên quân đánh địch
+## DỌC ĐƯỜNG nhưng không bị dụ đuổi quá leash_move khỏi tuyến.
+func _segment_anchor(a: Vector2, b: Vector2) -> Vector2:
+	var ab := b - a
+	var len2 := ab.length_squared()
+	if len2 < 1.0:
+		return a
+	var t := clampf((global_position - a).dot(ab) / len2, 0.0, 1.0)
+	return a + ab * t
+
+## Neo giữ khoảng (leash) theo ngữ cảnh: lệnh trực tiếp thường + tổng tấn
+## công = không neo (người chơi đã ra lệnh rõ); giữ nhà = neo THÀNH; đi
+## điểm = neo điểm lệnh; lệnh RTS nâng cao = neo theo NGỮ CẢNH LỆNH
+## (đoạn đường đi / đối tượng hộ vệ).
 ## Trả về [anchor, radius]; radius < 0 = không áp leash.
 func _leash(player: PlayerState) -> Array:
+	if direct_mode == "attack_move":
+		return [_segment_anchor(am_from, direct_point), float(Stats.UNIT_AI["leash_move"])]
+	if direct_mode == "patrol":
+		return [_segment_anchor(patrol_a, direct_point), float(Stats.UNIT_AI["leash_move"])]
+	if direct_mode == "guard":
+		var gt := guard_target
+		if gt != null and is_instance_valid(gt):
+			return [(gt as Node2D).global_position, float(Stats.UNIT_AI["leash_move"])]
+		return [Vector2.ZERO, -1.0]
 	if direct_mode != "":
 		return [Vector2.ZERO, -1.0]
 	if player.stance == "hold":
@@ -327,6 +402,74 @@ func _find_best_enemy_unit(range_px: float, player: PlayerState) -> Unit:
 			best_score = score
 			best = u
 	return best
+
+# ===================== LỆNH RTS NÂNG CAO (Team 5) =====================
+# Cả 3 lệnh dùng CHUNG 1 cửa giao tranh (_engage_visible): mục tiêu do
+# _acquire_targets chọn — đã qua cổng sương mù _can_see (chỉ địch phe mình
+# THẤY ĐƯỢC) + leash theo ngữ cảnh lệnh. Không có đường tắt "biết" địch
+# trong vùng đen nào ở đây.
+
+## Ưu tiên giao tranh của các lệnh RTS: quân địch đã chọn -> công trình
+## địch cản đường. Trả true nếu frame này đã xử lý giao tranh.
+func _engage_visible(player: PlayerState, delta: float) -> bool:
+	var enemy := _valid_target_unit()
+	if enemy != null:
+		_combat_unit(enemy, delta, player)
+		return true
+	var struct := _valid_target_struct()
+	if struct != null:
+		_combat_structure(struct, delta, player)
+		return true
+	return false
+
+func _step_attack_move(player: PlayerState, delta: float) -> void:
+	if _engage_visible(player, delta):
+		return
+	if global_position.distance_to(direct_point) > 16.0:
+		_move_toward(direct_point + slot_offset * 0.5, delta)
+	else:
+		_play("idle") # tới nơi: GIỮ ĐIỂM — lệnh còn hiệu lực, vẫn quét địch
+
+func _step_patrol(player: PlayerState, delta: float) -> void:
+	if _engage_visible(player, delta):
+		return
+	var wp := direct_point if patrol_to_b else patrol_a
+	var dest := wp + slot_offset * 0.5
+	if global_position.distance_to(dest) > 18.0:
+		_move_toward(dest, delta)
+	else:
+		patrol_to_b = not patrol_to_b
+		_play("idle")
+
+func _step_guard(player: PlayerState, delta: float) -> void:
+	var t := guard_target
+	var gone := t == null or not is_instance_valid(t) \
+		or (t is Unit and not (t as Unit).is_alive()) \
+		or (t is Structure and not (t as Structure).is_alive())
+	if gone:
+		# Đối tượng hộ vệ mất -> GIỮ ĐIỂM NGAY TẠI CHỖ (attack-move tại vị
+		# trí hiện tại), không tự quay về thành như thái độ hold thường.
+		set_attack_move(global_position)
+		return
+	if _engage_visible(player, delta):
+		return
+	var anchor := (t as Node2D).global_position
+	if t is Structure:
+		# Đứng ở vòng ngoài quanh công trình, phía mình đang đứng.
+		var want := (t as Structure).radius + 34.0
+		if global_position.distance_to(anchor) > want + 12.0:
+			var dir := (global_position - anchor).normalized()
+			_move_toward(anchor + dir * want, delta)
+		else:
+			_play("idle")
+	else:
+		# Bám theo quân đồng minh: điểm bám = vị trí đối tượng + slot_offset
+		# riêng của mình (nhiều quân hộ vệ tự tỏa ra, không chồng 1 điểm).
+		var follow := anchor + slot_offset
+		if global_position.distance_to(follow) > 14.0:
+			_move_toward(follow, delta)
+		else:
+			_play("idle")
 
 ## player == null khi đánh theo LỆNH TRỰC TIẾP (không áp leash).
 func _combat_unit(u: Unit, delta: float, player: PlayerState = null) -> void:

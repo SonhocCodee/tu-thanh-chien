@@ -38,6 +38,9 @@ var elapsed: float = 0.0
 
 var placing_type: String = ""
 var awaiting_order: bool = false
+# Lệnh RTS nâng cao (Team 5): chế độ lệnh chờ click đích của người chơi.
+var order_mode: String = "" # "" | "attack_move" | "patrol" | "guard"
+var _idle_focus_id: int = 0 # instance id nông dân nhàn được chọn gần nhất (xoay vòng)
 
 # --- Placement preview: bóng ma công trình bám theo chuột khi đang đặt ---
 var _place_ghost: Node2D = null
@@ -866,6 +869,78 @@ func exec_direct_attack(player: PlayerState, unit: Unit, target: Node) -> bool:
 	unit.set_direct_attack(target)
 	return true
 
+# ===================== LỆNH RTS NÂNG CAO (Team 5) =====================
+# Cùng kỷ luật với mọi lệnh trực tiếp: Main kiểm tra hợp lệ rồi mới chạy.
+# Các lệnh này chỉ đặt ĐIỂM ĐÍCH / ĐỐI TƯỢNG — hành vi giao tranh đi qua
+# ĐÚNG cổng sương mù của AI quân (Unit._can_see khi chọn mục tiêu), quân
+# không "biết" địch nào ngoài tầm nhìn của phe mình.
+
+func exec_attack_move(player: PlayerState, unit: Unit, point: Vector2) -> bool:
+	if unit == null or unit.owner_pid != player.pid or not unit.is_alive():
+		return false
+	unit.set_attack_move(clamp_to_world(point))
+	return true
+
+func exec_patrol(player: PlayerState, unit: Unit, point: Vector2) -> bool:
+	if unit == null or unit.owner_pid != player.pid or not unit.is_alive():
+		return false
+	unit.set_patrol(clamp_to_world(point))
+	return true
+
+func exec_guard(player: PlayerState, unit: Unit, target: Node) -> bool:
+	if unit == null or unit.owner_pid != player.pid or not unit.is_alive():
+		return false
+	if target == null or not is_instance_valid(target) or target == unit:
+		return false
+	# Đối tượng hộ vệ phải là quân/công trình CÒN SỐNG của CHÍNH phe mình.
+	if target is Unit:
+		var tu := target as Unit
+		if tu.owner_pid != player.pid or not tu.is_alive():
+			return false
+	elif target is Structure:
+		var ts := target as Structure
+		if ts.owner_pid != player.pid or not ts.is_alive():
+			return false
+	else:
+		return false
+	unit.set_guard(target)
+	return true
+
+## Mọi quân lính còn sống của 1 phe (phục vụ lệnh chọn toàn quân).
+func military_units_of(pid: int) -> Array:
+	var out: Array = []
+	for n in get_tree().get_nodes_in_group("units"):
+		var u := n as Unit
+		if u.owner_pid == pid and u.is_alive():
+			out.append(u)
+	return out
+
+## Nông dân đang NHÀN RỖI của 1 phe (xem Villager.is_idle).
+func idle_villagers_of(pid: int) -> Array:
+	var out: Array = []
+	for v in _villagers_of(pid):
+		if (v as Villager).is_idle():
+			out.append(v)
+	return out
+
+## Chọn + lia camera tới nông dân nhàn rỗi KẾ TIẾP (xoay vòng qua từng
+## người khi gọi lặp lại). Trả null nếu phe không còn nông dân nhàn nào.
+func exec_find_idle_villager(player: PlayerState) -> Villager:
+	var list := idle_villagers_of(player.pid)
+	if list.is_empty():
+		return null
+	var idx := 0
+	for i in list.size():
+		if (list[i] as Villager).get_instance_id() == _idle_focus_id:
+			idx = (i + 1) % list.size()
+			break
+	var v := list[idx] as Villager
+	_idle_focus_id = v.get_instance_id()
+	controllers[player.pid].set_selection([v])
+	if player.pid == HUMAN_PID:
+		set_camera_to(v.global_position)
+	return v
+
 # ---- Tìm mục tiêu click phải (chỉ tính những gì người chơi THẤY được) ----
 
 func enemy_unit_at(pos: Vector2, radius: float) -> Unit:
@@ -896,6 +971,34 @@ func enemy_structure_at(pos: Vector2) -> Structure:
 			best_d = d
 			best = s
 	return best
+
+## Mục tiêu ĐỒNG MINH tại điểm click (cho lệnh hộ vệ): quân mình gần nhất
+## trong 30px, else công trình mình chạm bán kính. Quân/công trình của
+## chính phe mình thì luôn biết vị trí — không cần cổng sương mù.
+func friendly_target_at(pos: Vector2) -> Node:
+	var best: Node = null
+	var best_d := 30.0
+	for n in get_tree().get_nodes_in_group("units"):
+		var u := n as Unit
+		if u.owner_pid != HUMAN_PID or not u.is_alive():
+			continue
+		var d := u.global_position.distance_to(pos)
+		if d < best_d:
+			best_d = d
+			best = u
+	if best != null:
+		return best
+	var bs: Structure = null
+	var bd := 1e9
+	for n in get_tree().get_nodes_in_group("structures"):
+		var s := n as Structure
+		if s.owner_pid != HUMAN_PID or not s.is_alive():
+			continue
+		var d := s.global_position.distance_to(pos)
+		if d <= s.radius + 14.0 and d < bd:
+			bd = d
+			bs = s
+	return bs
 
 func res_node_at(pos: Vector2, radius: float) -> ResourceNode:
 	var best: ResourceNode = null
@@ -1325,6 +1428,7 @@ func _end_match(won: bool) -> void:
 func set_placement_mode(building_type: String) -> void:
 	placing_type = building_type
 	awaiting_order = false
+	order_mode = ""
 	if is_warehouse_type(building_type):
 		# Kho chuyên dụng đặt được ở mọi vùng đã khám phá -> không hiện khung vùng căn cứ.
 		_zone_rect.visible = false
@@ -1349,6 +1453,7 @@ func set_placement_mode(building_type: String) -> void:
 func cancel_modes() -> void:
 	placing_type = ""
 	awaiting_order = false
+	order_mode = ""
 	_zone_rect.visible = false
 	for c in castles.values():
 		(c as Castle).highlight_target = false
@@ -1432,7 +1537,7 @@ func _update_place_ghost() -> void:
 ## Tính ngữ cảnh con trỏ tại 1 điểm world (vòng lặp chính gọi theo throttle;
 ## test gọi thẳng hàm này rồi đọc cursor_context / hover_target).
 func update_hover_cursor(world_pos: Vector2) -> void:
-	if placing_type != "" or awaiting_order:
+	if placing_type != "" or awaiting_order or order_mode != "":
 		_set_cursor_context("placement" if placing_type != "" else "default", null)
 		return
 	if match_over or _dragging or _is_point_over_ui(world_pos):
@@ -1512,11 +1617,82 @@ func _hover_ring_radius(target: Node2D) -> float:
 func start_order_mode() -> void:
 	awaiting_order = true
 	placing_type = ""
+	order_mode = ""
 	_zone_rect.visible = false
 	for pid in castles.keys():
 		(castles[pid] as Castle).highlight_target = pid != HUMAN_PID and players[pid].alive
 	if _hud != null:
 		_hud.show_message("Bấm vào THÀNH ĐỊCH ĐÃ LỘ DIỆN để tổng tấn công, hoặc bấm 1 điểm trên map để quân đi trinh sát tới đó.")
+
+# ===================== CHẾ ĐỘ LỆNH RTS (Team 5) =====================
+# Giống start_order_mode: HUD (nút) và phím tắt (A/P/G) mở chế độ, click
+# trái kế tiếp trên map là điểm đích/đối tượng; chuột phải hoặc Esc huỷ.
+
+func start_attack_move_mode() -> void:
+	order_mode = "attack_move"
+	placing_type = ""
+	awaiting_order = false
+	_zone_rect.visible = false
+	if _hud != null:
+		_hud.show_message("ĐÁNH–DI CHUYỂN: bấm 1 điểm trên map — quân đi tới đó, tự đánh mọi địch trên đường, tới nơi thì giữ điểm. (Chuột phải/Esc để huỷ)")
+
+func start_patrol_mode() -> void:
+	order_mode = "patrol"
+	placing_type = ""
+	awaiting_order = false
+	_zone_rect.visible = false
+	if _hud != null:
+		_hud.show_message("TUẦN TRA: bấm điểm B — quân đi qua lại giữa VỊ TRÍ HIỆN TẠI và điểm B, đánh địch dọc đường. Ra lệnh khác là huỷ tuần tra. (Chuột phải/Esc để huỷ)")
+
+func start_guard_mode() -> void:
+	order_mode = "guard"
+	placing_type = ""
+	awaiting_order = false
+	_zone_rect.visible = false
+	if _hud != null:
+		_hud.show_message("HỘ VỆ: bấm vào QUÂN hoặc CÔNG TRÌNH đồng minh — quân đã chọn sẽ bám theo bảo vệ nó. (Chuột phải/Esc để huỷ)")
+
+func _selection_has_military() -> bool:
+	for n in human_controller().get_selection():
+		if n is Unit:
+			return true
+	return false
+
+func _resolve_order_mode_click(pos: Vector2) -> void:
+	var ctrl := human_controller()
+	match order_mode:
+		"attack_move":
+			var n := ctrl.order_selected_attack_move(pos)
+			if n > 0:
+				spawn_order_marker(pos, Color(1, 0.55, 0.15))
+				if _hud != null:
+					_hud.show_message("Đánh–di chuyển: %d quân lên đường!" % n)
+				order_mode = ""
+			elif _hud != null:
+				_hud.show_message("Hãy chọn QUÂN LÍNH trước khi ra lệnh đánh–di chuyển.")
+		"patrol":
+			var n2 := ctrl.order_selected_patrol(pos)
+			if n2 > 0:
+				spawn_order_marker(pos, Color(0.3, 0.85, 1))
+				if _hud != null:
+					_hud.show_message("Tuần tra: %d quân đi qua lại giữa vị trí hiện tại và điểm này." % n2)
+				order_mode = ""
+			elif _hud != null:
+				_hud.show_message("Hãy chọn QUÂN LÍNH trước khi ra lệnh tuần tra.")
+		"guard":
+			var t := friendly_target_at(pos)
+			if t == null:
+				if _hud != null:
+					_hud.show_message("Chỗ đó không có quân/công trình ĐỒNG MINH — bấm lại vào đối tượng cần hộ vệ.")
+			else:
+				var n3 := ctrl.order_selected_guard(t)
+				if n3 > 0:
+					spawn_order_marker((t as Node2D).global_position, Color(0.35, 0.6, 1))
+					if _hud != null:
+						_hud.show_message("Hộ vệ: %d quân bám theo bảo vệ mục tiêu!" % n3)
+					order_mode = ""
+				elif _hud != null:
+					_hud.show_message("Hãy chọn QUÂN LÍNH (khác đối tượng được hộ vệ) trước.")
 
 func _handle_right_click(pos: Vector2) -> void:
 	var ctrl := human_controller()
@@ -1549,6 +1725,17 @@ func _handle_right_click(pos: Vector2) -> void:
 			if _hud != null:
 				_hud.show_message("Mục tiêu chưa lộ diện — hãy cho quân trinh sát tới gần trước!")
 		return
+	# 2.25) Quân/công trình ĐỒNG MINH -> quân đã chọn HỘ VỆ đối tượng đó
+	# (chỉ quân lính hộ vệ được; chọn toàn nông dân thì rơi xuống các nhánh
+	# dưới như lệnh di chuyển/farm thường).
+	var ally := friendly_target_at(pos)
+	if ally != null:
+		var n_guard := ctrl.order_selected_guard(ally)
+		if n_guard > 0:
+			spawn_order_marker((ally as Node2D).global_position, Color(0.35, 0.6, 1))
+			if _hud != null:
+				_hud.show_message("Hộ vệ mục tiêu!")
+			return
 	# 2.5) Cừu đang SÁNG -> nông dân đi SĂN lấy thịt (chỉ nông dân săn được).
 	var sheep := sheep_at(pos, 36.0)
 	if sheep != null:
@@ -1594,7 +1781,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		if over_ui:
 			return
 		if event.button_index == MOUSE_BUTTON_RIGHT:
-			if placing_type != "" or awaiting_order:
+			if placing_type != "" or awaiting_order or order_mode != "":
 				cancel_modes()
 			else:
 				_handle_right_click(get_global_mouse_position())
@@ -1631,6 +1818,11 @@ func _unhandled_input(event: InputEvent) -> void:
 				_hud.show_message("Quân đang đi trinh sát tới điểm đã chọn.")
 			cancel_modes()
 			return
+		if order_mode != "":
+			# Click trái khi đang ở chế độ lệnh RTS (A/P/G): điểm click là
+			# đích của lệnh (xem _resolve_order_mode_click).
+			_resolve_order_mode_click(pos)
+			return
 		# M2: bắt đầu kéo khung chọn.
 		_drag_candidate = true
 		_dragging = false
@@ -1656,9 +1848,38 @@ func _unhandled_input(event: InputEvent) -> void:
 		else:
 			click_select(get_global_mouse_position())
 		return
-	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
-		cancel_modes()
-		human_controller().clear_selection()
+	if event is InputEventKey and event.pressed and not event.echo:
+		match event.keycode:
+			KEY_ESCAPE:
+				cancel_modes()
+				human_controller().clear_selection()
+			KEY_A:
+				# Shift+A = chọn toàn quân; A thường = chế độ đánh-di-chuyển
+				# (chỉ khi đang chọn ít nhất 1 quân lính, kẻo chen phím lia
+				# camera WASD của người chơi đang không chọn quân).
+				if event.shift_pressed:
+					var n_all := human_controller().select_all_military()
+					if _hud != null:
+						if n_all > 0:
+							_hud.show_message("Đã chọn toàn bộ %d quân." % n_all)
+						else:
+							_hud.show_message("Chưa có quân nào để chọn.")
+				elif _selection_has_military():
+					start_attack_move_mode()
+			KEY_P:
+				if _selection_has_military():
+					start_patrol_mode()
+			KEY_G:
+				if _selection_has_military():
+					start_guard_mode()
+			KEY_PERIOD:
+				# "." kiểu Đế Chế: tìm nông dân nhàn rỗi (xoay vòng).
+				var v := human_controller().find_idle_villager()
+				if _hud != null:
+					if v != null:
+						_hud.show_message("Nông dân nhàn rỗi — đã chọn, camera đã lia tới (bấm . tiếp để xoay vòng).")
+					else:
+						_hud.show_message("Không có nông dân nhàn rỗi.")
 
 # ===================== DEMO CHỤP ẢNH =====================
 
