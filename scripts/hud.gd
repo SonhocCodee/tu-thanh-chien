@@ -36,7 +36,7 @@ const BUILD_ART := {
 const BUILD_DESC := {
 	"house": "Tăng giới hạn dân số.",
 	"barracks": "Nơi luyện kiếm sĩ và cung thủ, tốc độ nhanh hơn thành chính.",
-	"tower": "Tháp tự bắn tên vào địch trong tầm.",
+	"tower": "Cung thủ đứng trên tháp bắn tên vào địch trong tầm. Giữ 1 ô dân cho cung thủ.",
 	"storehouse": "Điểm giao tài nguyên — đặt gần bãi farm để dân khỏi đi xa.",
 	"soldier_house": "Tăng GIỚI HẠN QUÂN +6 ô. Không luyện quân — phá nhà này là quân đông bị kẹt không luyện thêm được.",
 }

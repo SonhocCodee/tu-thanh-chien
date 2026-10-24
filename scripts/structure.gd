@@ -112,7 +112,10 @@ func _update_fire() -> void:
 	var burning: bool = display_burning if use_snapshot else is_burning_live()
 	_fire.visible = burning and not disp_destroyed()
 
-# --- Tháp bắn tự vệ dùng chung ---
+# --- Tự vệ bắn tên: CHỈ còn thành chính dùng (tháp canh đã chuyển sang
+# cung thủ đứng bắn riêng trong building.gd — tháp không tự bắn nữa).
+# _tower_timer dùng chung: building.gd mượn biến này làm đồng hồ hồi chiêu
+# cho cung thủ trên tháp. ---
 var _tower_timer: float = 0.0
 
 func _tick_tower(delta: float, p_range: float, p_damage: float, p_cooldown: float, p_proj_speed: float, muzzle: Vector2) -> void:
