@@ -52,6 +52,14 @@ const GHOST_PRESENT := {
 	"storehouse": [0.6, -30.0],
 }
 
+# --- Con trỏ ngữ cảnh khi di chuột (hover) ---
+var cursor_context: String = "default" # "default" | "gather" | "placement"
+var hover_target: Node2D = null # mục tiêu thu thập đang được vòng sáng làm nổi
+var _hover_timer: float = 0.0
+var _hover_ring: Node2D = null
+var _cursor_tex_default: Texture2D = null
+var _cursor_tex_gather: Texture2D = null
+
 # --- M2: camera + chọn quân ---
 var _camera: Camera2D = null
 var _sel_overlay: Node2D = null
@@ -123,6 +131,14 @@ func _process(delta: float) -> void:
 		_update_fog()
 	_update_camera(delta)
 	_update_place_ghost()
+	# Con trỏ ngữ cảnh: quét throttle 0.08s (không quét mỗi frame); vòng nổi
+	# thì bám theo mục tiêu từng frame cho khỏi giật khi mục tiêu di động (cừu).
+	_hover_timer -= delta
+	if _hover_timer <= 0.0:
+		_hover_timer = 0.08
+		update_hover_cursor(get_global_mouse_position())
+	if _hover_ring != null and _hover_ring.visible and hover_target != null and is_instance_valid(hover_target):
+		_hover_ring.global_position = hover_target.global_position
 	if demo_mode:
 		_demo_update()
 	if m2demo_mode:
@@ -1122,6 +1138,105 @@ func _update_place_ghost() -> void:
 		_ghost_sprite.modulate = Color(1.45, 0.5, 0.5, 0.55)
 		_ghost_foot.color = Color(1.0, 0.3, 0.3, 0.30)
 
+# ===================== CON TRỎ NGỮ CẢNH KHI DI CHUỘT (hover) =====================
+# Người chơi từng tưởng click trượt vì di chuột vào tài nguyên mà con trỏ
+# không đổi. Luật: đang chọn >= 1 NÔNG DÂN + chuột lên mục tiêu THU THẬP ĐƯỢC
+# -> con trỏ đổi sang Cursor_02 (tay chỉ) + vòng sáng nổi dưới chân mục tiêu.
+# "Thu thập được" KHỚP ĐÚNG 2 nhánh farm của _handle_right_click (cùng hàm
+# phân giải, cùng bán kính 36): cừu qua sheep_at() — phải đang SÁNG trong
+# sương mù; node tài nguyên qua res_node_at() + cổng luật của
+# exec_direct_farm() — đã khám phá (sương mù ĐEN thì không đổi con trỏ) và
+# chưa cạn. Thứ tự cũng theo click phải: cừu xét trước node.
+# Pack KHÔNG có con trỏ hình công cụ (rìu/cuốc) hay kiếm tấn công — đã soi
+# đủ bộ Cursors 01-04 + Pointers 01-06: chỉ có mũi tên / tay chỉ / dấu cấm /
+# góc khung. Nên ngữ cảnh farm dùng Cursor_02; ngữ cảnh tấn công bỏ qua.
+# Ưu tiên trạng thái: đang đặt nhà (có bóng ma) hoặc chờ lệnh tổng tấn công
+# -> giữ nguyên hành vi cũ; chuột trên HUD -> HUD làm chủ con trỏ như hiện
+# tại; đang kéo khung chọn -> không chen vào.
+# Cách áp con trỏ: HUD đã gán ảnh pack cho từng shape của Input; riêng shape
+# ARROW (shape hiển thị trên vùng map) được hoán ảnh 01 <-> 02 theo ngữ
+# cảnh, về "default"/"placement" thì khôi phục đúng ảnh + hotspot HUD đã cài.
+
+## Tính ngữ cảnh con trỏ tại 1 điểm world (vòng lặp chính gọi theo throttle;
+## test gọi thẳng hàm này rồi đọc cursor_context / hover_target).
+func update_hover_cursor(world_pos: Vector2) -> void:
+	if placing_type != "" or awaiting_order:
+		_set_cursor_context("placement" if placing_type != "" else "default", null)
+		return
+	if match_over or _dragging or _is_point_over_ui(world_pos):
+		_set_cursor_context("default", null)
+		return
+	if _selection_has_villager():
+		var sheep := sheep_at(world_pos, 36.0)
+		if sheep != null:
+			_set_cursor_context("gather", sheep)
+			return
+		var node := res_node_at(world_pos, 36.0)
+		if node != null and not node.is_depleted() and is_pos_explored_for(HUMAN_PID, node.global_position):
+			_set_cursor_context("gather", node)
+			return
+	_set_cursor_context("default", null)
+
+func _selection_has_villager() -> bool:
+	for n in human_controller().get_selection():
+		if n is Villager:
+			return true
+	return false
+
+## Chuột có đang trên UI không — tính TỪ ĐIỂM WORLD (qua phép biến đổi
+## canvas) để khớp cả khi test gọi thẳng update_hover_cursor, không phụ
+## thuộc vị trí chuột thật của hệ điều hành. Cùng nguồn sự thật với
+## _unhandled_input: hỏi HUD trước, fallback dải y cũ.
+func _is_point_over_ui(world_pos: Vector2) -> bool:
+	var screen_pos := get_global_transform_with_canvas() * world_pos
+	if _hud != null and _hud.has_method("is_point_over_ui"):
+		return _hud.is_point_over_ui(screen_pos)
+	return screen_pos.y < 38.0 or screen_pos.y > FIELD_BOTTOM
+
+func _set_cursor_context(ctx: String, target: Node2D) -> void:
+	var changed := ctx != cursor_context
+	cursor_context = ctx
+	hover_target = target
+	if changed:
+		_apply_cursor_image()
+	_refresh_hover_ring()
+
+func _apply_cursor_image() -> void:
+	if _cursor_tex_default == null:
+		_cursor_tex_default = load("res://assets/ui/cursors/cursor_01.png")
+		_cursor_tex_gather = load("res://assets/ui/cursors/cursor_02.png")
+	if cursor_context == "gather":
+		if _cursor_tex_gather != null:
+			Input.set_custom_mouse_cursor(_cursor_tex_gather, Input.CURSOR_ARROW, Vector2(30, 17))
+	elif _cursor_tex_default != null:
+		Input.set_custom_mouse_cursor(_cursor_tex_default, Input.CURSOR_ARROW, Vector2(23, 18))
+
+func _refresh_hover_ring() -> void:
+	if cursor_context != "gather" or hover_target == null or not is_instance_valid(hover_target):
+		if _hover_ring != null:
+			_hover_ring.visible = false
+		return
+	if _hover_ring == null:
+		_hover_ring = HoverRing.new()
+		_hover_ring.z_index = 62 # trên sương mù (50) + khung chọn (60), dưới bóng ma đặt nhà (65)
+		add_child(_hover_ring)
+	_hover_ring.global_position = hover_target.global_position
+	(_hover_ring as HoverRing).radius = _hover_ring_radius(hover_target)
+	_hover_ring.visible = true
+	_hover_ring.queue_redraw()
+
+func _hover_ring_radius(target: Node2D) -> float:
+	if target is Sheep:
+		return 26.0
+	if target is ResourceNode:
+		var n := target as ResourceNode
+		if n.res_type == "wood":
+			return 34.0
+		if n.res_type == "meat":
+			return 24.0
+		return 40.0 if n.is_big else 28.0
+	return 30.0
+
 func start_order_mode() -> void:
 	awaiting_order = true
 	placing_type = ""
@@ -1546,6 +1661,25 @@ class SelectionOverlay:
 		draw_texture_rect_region(CORNER_TEX, Rect2(Vector2(br.x - h, tl.y - h), Vector2(CORNER, CORNER)), Rect2(32, 0, 32, 32))
 		draw_texture_rect_region(CORNER_TEX, Rect2(Vector2(tl.x - h, br.y - h), Vector2(CORNER, CORNER)), Rect2(0, 32, 32, 32))
 		draw_texture_rect_region(CORNER_TEX, Rect2(br - Vector2(h, h), Vector2(CORNER, CORNER)), Rect2(32, 32, 32, 32))
+
+# Vòng sáng dưới chân mục tiêu thu thập được khi di chuột (nông dân đang
+# chọn): elip dẹt theo mặt đất, vàng nhạt — cùng họ "dấu mục tiêu" với khung
+# chọn góc vàng của pack, nhưng nhẹ và nằm dưới chân node cho khỏi rối.
+class HoverRing:
+	extends Node2D
+	var radius: float = 32.0
+
+	func _draw() -> void:
+		var outline := PackedVector2Array()
+		var fill := PackedVector2Array()
+		for i in 41:
+			var a := TAU * float(i) / 40.0
+			var p := Vector2(cos(a) * radius, sin(a) * radius * 0.42)
+			outline.append(p)
+			if i < 40:
+				fill.append(p)
+		draw_colored_polygon(fill, Color(1.0, 0.9, 0.45, 0.13))
+		draw_polyline(outline, Color(1.0, 0.9, 0.45, 0.85), 2.5, true)
 
 # Vòng dấu lệnh click phải: hiện rồi mờ dần.
 class OrderMarker:
