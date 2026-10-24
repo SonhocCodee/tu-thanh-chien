@@ -62,7 +62,9 @@ func setup(p_owner: int, p_type: String, p_color: String, p_main: Node, p_slot: 
 func _ready() -> void:
 	add_to_group("units")
 	_anim = AnimatedSprite2D.new()
-	_anim.scale = Vector2(0.5, 0.5)
+	# Lính giáo: sheet frame 320 (các quân khác 192) -> thu tỉ lệ để hình
+	# hiển thị ~109px, nhỉnh hơn kiếm sĩ (96px) đúng chất tinh nhuệ.
+	_anim.scale = Vector2(0.34, 0.34) if unit_type == "lancer" else Vector2(0.5, 0.5)
 	_anim.position = Vector2(0, -20)
 	_anim.sprite_frames = _build_frames()
 	add_child(_anim)
@@ -75,13 +77,19 @@ func _build_frames() -> SpriteFrames:
 		_add_anim(sf, "idle", base + "warrior_idle.png", 8, 8.0)
 		_add_anim(sf, "run", base + "warrior_run.png", 6, 10.0)
 		_add_anim(sf, "attack", base + "warrior_attack.png", 4, 10.0)
+	elif unit_type == "lancer":
+		# Sheet Lancer của pack: frame 320x320 (Idle 12, Run 6,
+		# Right_Attack 3 — bản đánh ngang khớp cơ chế lật trái/phải sẵn có).
+		_add_anim(sf, "idle", base + "lancer_idle.png", 12, 8.0, 320.0)
+		_add_anim(sf, "run", base + "lancer_run.png", 6, 10.0, 320.0)
+		_add_anim(sf, "attack", base + "lancer_attack.png", 3, 8.0, 320.0)
 	else:
 		_add_anim(sf, "idle", base + "archer_idle.png", 6, 8.0)
 		_add_anim(sf, "run", base + "archer_run.png", 4, 10.0)
 		_add_anim(sf, "attack", base + "archer_shoot.png", 8, 12.0)
 	return sf
 
-func _add_anim(sf: SpriteFrames, anim_name: String, tex_path: String, frames: int, fps: float) -> void:
+func _add_anim(sf: SpriteFrames, anim_name: String, tex_path: String, frames: int, fps: float, frame_size: float = FRAME) -> void:
 	var sheet := load(tex_path) as Texture2D
 	sf.add_animation(anim_name)
 	sf.set_animation_speed(anim_name, fps)
@@ -89,7 +97,7 @@ func _add_anim(sf: SpriteFrames, anim_name: String, tex_path: String, frames: in
 	for i in frames:
 		var at := AtlasTexture.new()
 		at.atlas = sheet
-		at.region = Rect2(i * FRAME, 0, FRAME, FRAME)
+		at.region = Rect2(i * frame_size, 0, frame_size, frame_size)
 		sf.add_frame(anim_name, at)
 
 func _play(anim_name: String) -> void:

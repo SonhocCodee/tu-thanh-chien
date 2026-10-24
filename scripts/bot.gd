@@ -100,10 +100,15 @@ func _decide() -> void:
 		if int(player.allocation["wood"]) != w or int(player.allocation["stone"]) != s or int(player.allocation["gold"]) != g or int(player.allocation["meat"]) != m:
 			ctrl.set_villager_allocation(w, s, g, m)
 
-	# 3) Xây dựng theo thứ tự: Nhà -> Doanh trại -> Tháp -> Nhà Kho -> Nhà 2.
+	# 3) Xây dựng theo thứ tự: Nhà -> Doanh trại -> Tháp -> Nhà Kho ->
+	# Nhà Lính -> Nhà 2. NGOẠI LỆ ƯU TIÊN: đang kẹt GIỚI HẠN QUÂN mà chưa
+	# có Nhà Lính và còn đủ tài nguyên -> xây Nhà Lính ngay để mở cap.
 	var counts := counts0
 	var slots: Array = game.build_slots(player.pid)
-	if int(counts.get("house", 0)) == 0:
+	var army_capped: bool = game.army_used(player.pid) >= game.army_cap(player.pid)
+	if army_capped and int(counts.get("soldier_house", 0)) == 0 and player.can_afford(Stats.BUILDINGS["soldier_house"]["cost"]):
+		ctrl.place_building("soldier_house", slots[5])
+	elif int(counts.get("house", 0)) == 0:
 		ctrl.place_building("house", slots[0])
 	elif int(counts.get("barracks", 0)) == 0:
 		ctrl.place_building("barracks", slots[1])
@@ -111,6 +116,8 @@ func _decide() -> void:
 		ctrl.place_building("tower", slots[2])
 	elif int(counts.get("storehouse", 0)) == 0:
 		ctrl.place_building("storehouse", slots[4])
+	elif int(counts.get("soldier_house", 0)) == 0:
+		ctrl.place_building("soldier_house", slots[5])
 	elif int(counts.get("house", 0)) < 2:
 		ctrl.place_building("house", slots[3])
 
@@ -119,7 +126,14 @@ func _decide() -> void:
 		ctrl.queue_training(castle, "pawn")
 	var barracks: Building = game.active_barracks(player.pid)
 	if barracks != null and barracks.queue_count() < 3:
-		ctrl.queue_training(barracks, "archer")
+		# Trộn LÍNH GIÁO (tinh nhuệ, 2 ô) vào đạo quân: giữ tỉ lệ khoảng
+		# 1 giáo / 4 quân; chỉ gọi luyện khi còn đủ 2 ô quân trống.
+		var lancers: int = game.unit_type_count(player.pid, "lancer")
+		var mil: int = game.military_count(player.pid)
+		if lancers * 4 < mil and game.army_used(player.pid) + Stats.pop_cost("lancer") <= game.army_cap(player.pid):
+			ctrl.queue_training(barracks, "lancer")
+		else:
+			ctrl.queue_training(barracks, "archer")
 	elif castle.queue_count() < 3:
 		ctrl.queue_training(castle, "warrior")
 
@@ -164,6 +178,10 @@ func _decide() -> void:
 		return
 	if player.stance == "move":
 		ctrl.set_stance("hold")
-	if military >= attack_army_size and player.stance != "attack":
+	# Ngưỡng tổng tấn công tính theo Ô QUÂN (army_used), KHÔNG theo đầu
+	# người: lính tinh nhuệ chiếm 2 ô nên một đạo quân đầy ô có thể chỉ có
+	# 6-7 đầu — đếm đầu thì không bao giờ đủ 8 để xuất kích, mọi phe cùng
+	# kẹt ở cap và trận không bao giờ kết thúc (đã bắt gặp ở test m2f).
+	if game.army_used(player.pid) >= attack_army_size and player.stance != "attack":
 		var target_pid: int = known[_rng.randi_range(0, known.size() - 1)]
 		ctrl.set_stance("attack", target_pid)

@@ -9,6 +9,7 @@ var ctrl: PlayerController = null
 
 var _res_label: Label
 var _pop_label: Label
+var _army_label: Label
 var _clock_label: Label
 var _stance_label: Label
 var _msg_label: Label
@@ -37,9 +38,10 @@ func _ready() -> void:
 	top.size = Vector2(1280, 38)
 	add_child(top)
 	_res_label = _mk_label(top, Vector2(12, 8), 18)
-	_pop_label = _mk_label(top, Vector2(490, 8), 18)
-	_clock_label = _mk_label(top, Vector2(660, 8), 18)
-	_stance_label = _mk_label(top, Vector2(840, 8), 18)
+	_pop_label = _mk_label(top, Vector2(410, 8), 18)
+	_army_label = _mk_label(top, Vector2(548, 8), 18)
+	_clock_label = _mk_label(top, Vector2(705, 8), 18)
+	_stance_label = _mk_label(top, Vector2(885, 8), 18)
 	_msg_label = _mk_label(top, Vector2(12, 40), 16)
 	_msg_label.add_theme_color_override("font_color", Color(1, 0.9, 0.4))
 	_msg_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
@@ -86,6 +88,7 @@ func _ready() -> void:
 		"PHÂN BỔ: nút +/- chia nông dân farm gỗ/đá/vàng/thịt — phân thịt là đi SĂN CỪU (lệnh click phải ưu tiên hơn phân bổ).",
 		"XÂY: bấm nút công trình rồi bấm vào vùng sáng quanh thành. NHÀ KHO: điểm giao tài nguyên, đặt được ở mọi vùng đã khám phá. LUYỆN QUÂN: nút ở thành/doanh trại.",
 		"THÁI ĐỘ: GIỮ NHÀ (quân ở nhà thủ) / TỔNG TẤN CÔNG (đánh thành địch đã lộ diện).",
+		"GIỚI HẠN QUÂN: quân có giới hạn riêng theo Ô (xem 'Quân: x/y ô') — xây NHÀ LÍNH để tăng. LÍNH GIÁO là tinh nhuệ: mạnh hơn hẳn kiếm sĩ nhưng chiếm 2 ô.",
 		"SƯƠNG MÙ: đen = chưa khám phá, mờ = đã qua (chỉ mờ đi, không đen lại), sáng = đang nhìn thấy.",
 	])
 	var help_close := _mk_button(_help_panel, Vector2(240, 350), Vector2(120, 36), "Đã hiểu")
@@ -130,15 +133,17 @@ func _ready() -> void:
 	_castle_queue_label = _mk_label(bottom, Vector2(928, 26), 12)
 	var row2 := _mk_label(bottom, Vector2(648, 58), 13)
 	row2.text = "Doanh trại:"
-	_train_barracks_buttons["warrior"] = _mk_button(bottom, Vector2(742, 54), Vector2(88, 24), "Kiếm sĩ")
-	_train_barracks_buttons["archer"] = _mk_button(bottom, Vector2(834, 54), Vector2(88, 24), "Cung thủ")
-	_barracks_queue_label = _mk_label(bottom, Vector2(928, 58), 12)
-	var cost_hint := _mk_label(bottom, Vector2(648, 86), 11)
-	cost_hint.text = "Giá: Nông dân 50 thịt • Kiếm sĩ 80 vàng • Cung thủ 70 vàng + 30 gỗ"
+	_train_barracks_buttons["warrior"] = _mk_button(bottom, Vector2(742, 54), Vector2(76, 24), "Kiếm sĩ")
+	_train_barracks_buttons["archer"] = _mk_button(bottom, Vector2(820, 54), Vector2(76, 24), "Cung thủ")
+	_train_barracks_buttons["lancer"] = _mk_button(bottom, Vector2(898, 54), Vector2(76, 24), "Lính giáo")
+	_barracks_queue_label = _mk_label(bottom, Vector2(978, 58), 11)
+	var cost_hint := _mk_label(bottom, Vector2(648, 82), 11)
+	cost_hint.text = "Giá: Nông dân 50 thịt • Kiếm sĩ 80 vàng • Cung thủ 70 vàng + 30 gỗ\nLính giáo 150 vàng + 30 gỗ — TINH NHUỆ, chiếm 2 ô quân (Nhà Lính tăng giới hạn quân)"
 	(_train_castle_buttons["pawn"] as Button).pressed.connect(func() -> void: ctrl.queue_training(game.castles[0], "pawn"))
 	(_train_castle_buttons["warrior"] as Button).pressed.connect(func() -> void: ctrl.queue_training(game.castles[0], "warrior"))
 	(_train_barracks_buttons["warrior"] as Button).pressed.connect(func() -> void: ctrl.queue_training(game.active_barracks(0), "warrior"))
 	(_train_barracks_buttons["archer"] as Button).pressed.connect(func() -> void: ctrl.queue_training(game.active_barracks(0), "archer"))
+	(_train_barracks_buttons["lancer"] as Button).pressed.connect(func() -> void: ctrl.queue_training(game.active_barracks(0), "lancer"))
 
 	_mk_title(bottom, Vector2(1030, 4), "Điều quân")
 	var hold_btn := _mk_button(bottom, Vector2(1030, 26), Vector2(110, 30), "GIỮ NHÀ")
@@ -211,6 +216,7 @@ func _process(delta: float) -> void:
 	var p := ctrl.player
 	_res_label.text = "Gỗ: %d    Đá: %d    Vàng: %d    Thịt: %d" % [int(p.resources["wood"]), int(p.resources["stone"]), int(p.resources["gold"]), int(p.resources["meat"])]
 	_pop_label.text = "Dân số: %d/%d" % [game.pop_used(0), game.pop_cap(0)]
+	_army_label.text = "Quân: %d/%d ô" % [game.army_used(0), game.army_cap(0)]
 	if _sel_label != null:
 		var n_sel := ctrl.get_selection().size()
 		_sel_label.text = "Đã chọn: %d" % n_sel if n_sel > 0 else ""
@@ -242,7 +248,8 @@ func _can_train(producer: Structure, unit_type: String) -> bool:
 	var p := ctrl.player
 	if not p.can_afford(Stats.TRAINING[unit_type]["cost"]):
 		return false
-	if game.pop_used(0) + 1 > game.pop_cap(0):
+	# Cả hai giới hạn: dân số chung + giới hạn quân (theo ô pop_cost).
+	if game.cap_block_reason(0, unit_type) != "":
 		return false
 	return producer != null and producer.can_produce()
 

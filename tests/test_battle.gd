@@ -62,6 +62,16 @@ func _run() -> void:
 	p0.resources["gold"] = 5000
 	p0.resources["wood"] = 5000
 	p0.resources["meat"] = 5000
+	# Hệ Nhà Lính: luyện KIẾM SĨ giờ còn bị GIỚI HẠN QUÂN chặn trước dân số.
+	# Mục này kiểm riêng việc chặn ở DÂN SỐ nên xây 3 Nhà Lính (+18 ô quân)
+	# để army cap (24) cao hơn hẳn dân số (18) — giới hạn dân số là cái chặn.
+	ctrl0.place_building("soldier_house", slots[1])
+	ctrl0.place_building("soldier_house", slots[2])
+	ctrl0.place_building("soldier_house", slots[3])
+	t = 0.0
+	while t < 120.0 and g.army_cap(0) < g.pop_cap(0):
+		await _wait(2.0)
+		t += 2.0
 	var gold_before: int = p0.resources["meat"]
 	var ok_train: bool = ctrl0.queue_training(g.castles[0], "pawn")
 	var gold_after: int = p0.resources["meat"]
@@ -93,6 +103,9 @@ func _run() -> void:
 	slots = g.build_slots(0)
 	ctrl0.place_building("house", slots[0])
 	ctrl0.place_building("house", slots[3])
+	# Hệ Nhà Lính: cần 9 kiếm sĩ mà army cap nền chỉ 6 ô -> xây 1 Nhà Lính
+	# (+6 ô = 12) như người chơi thật phải làm.
+	ctrl0.place_building("soldier_house", slots[1])
 	t = 0.0
 	while t < 500.0 and g.military_count(0) < 9:
 		if g.castles[0].queue_count() < 4:
