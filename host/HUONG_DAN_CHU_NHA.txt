@@ -1,0 +1,35 @@
+TU THANH CHIEN — HUONG DAN CHU NHA (CHOI QUA MANG LAN)
+=======================================================
+
+GOI NAY CO GI:
+  server/        Chuong trinh may chu (giu toan bo tran dau)
+  web/           Ban game cho trinh duyet (may chu tu phuc vu)
+  start_host.bat / start_host.sh   File khoi dong — chi can chay 1 file nay
+
+3 BUOC DE CHOI:
+  1. Tren may chu nha: chay start_host.bat (Windows) hoac
+     start_host.sh (Linux/macOS). Cua so hien dia chi IP LAN cua may.
+     - Lan dau Windows hoi quyen tuong lua -> bam "Allow access"
+       (chon mang Private neu duoc hoi).
+  2. Gui cho ban be CUNG MANG LAN (cung wifi/router) duong dan:
+        http://<IP-cua-ban>:8911/?lan=1
+     Vi du: http://192.168.1.8:8911/?lan=1
+     Ban be chi can mo bang trinh duyet (Chrome/Edge/Firefox),
+     KHONG can cai gi them, KHONG can tai khoan.
+  3. Chu nha choi cung: mo trinh duyet tren chinh may minh toi
+        http://localhost:8911/?lan=1
+     Trong phong cho: nguoi ket noi dau tien la CHU PHONG.
+     Moi nguoi bam SAN SANG, chu phong bam BAT DAU TRAN.
+     Slot trong se do BOT lap (toi da 4 phe).
+
+LUU Y:
+  - Dung tat cua so may chu giua tran: may chu tat = tran dung.
+  - Ai rot mang giua tran: vao lai cung duong dan trong vong 60 giay
+    se duoc tra lai dung phe cua minh (game tu nho bang token).
+    Qua 60 giay, bot se tiep quan phe do.
+  - Khong can mo cong router, khong can internet khi dang choi.
+  - Neu trinh duyet bao loi "Secure Context" khi mo bang IP LAN:
+    mo chrome://flags/#unsafely-treat-insecure-origin-as-secure,
+    them http://<IP-cua-ban>:8911 vao o trong, chon Enabled, mo lai
+    trinh duyet. (Ban trong goi da duoc va san phan kiem tra nay,
+    day chi la du phong.)
