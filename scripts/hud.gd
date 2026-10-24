@@ -52,7 +52,7 @@ const UNIT_DESC := {
 const PRODUCER_LABELS := {"castle": "Thành chính", "barracks": "Doanh trại"}
 const TAB_TITLES := ["XÂY DỰNG", "HUẤN LUYỆN", "DÂN & PHÂN BỔ"]
 const TAB_HINTS := [
-	"Bấm thẻ rồi bấm vào vùng sáng quanh thành để đặt.",
+	"Bấm thẻ rồi bấm vào vùng ĐÃ KHÁM PHÁ bất kỳ để đặt — nông dân sẽ ra tận nơi xây.",
 	"Bấm thẻ để xếp hàng luyện quân. Hàng chờ + tiến trình ở trên mỗi nhóm thẻ.",
 	"Nút +/- chia nông dân đi farm. Lệnh click phải ưu tiên hơn phân bổ.",
 ]
@@ -812,7 +812,7 @@ func _build_help() -> void:
 		"LIA CAMERA: đưa chuột ra mép màn hình, phím WASD / mũi tên, hoặc bấm vào bản đồ nhỏ.",
 		"GIAO DIỆN: dải icon bên trái mở các tab Xây / Luyện / Dân. Phím Tab thu gọn/mở rộng panel, phím 1/2/3 mở tab tương ứng.",
 		"PHÂN BỔ: nút +/- ở tab Dân chia nông dân farm gỗ/đá/vàng/thịt — phân thịt là đi SĂN CỪU (lệnh click phải ưu tiên hơn phân bổ).",
-		"XÂY: bấm thẻ công trình ở tab Xây rồi bấm vào vùng sáng quanh thành. NHÀ KHO: điểm giao tài nguyên, đặt được ở mọi vùng đã khám phá. LUYỆN QUÂN: thẻ ở tab Luyện.",
+		"XÂY: bấm thẻ công trình ở tab Xây rồi bấm vào vùng ĐÃ KHÁM PHÁ bất kỳ trên đất (xa thành cũng được) — nông dân sẽ ra tận nơi đóng búa xây (nhà nhỏ 1 thợ, nhà lớn 2 thợ; thiếu thợ thì xây chậm). NHÀ KHO: điểm giao tài nguyên. LUYỆN QUÂN: thẻ ở tab Luyện.",
 		"THÁI ĐỘ: GIỮ NHÀ (quân ở nhà thủ) / TỔNG TẤN CÔNG (đánh thành địch đã lộ diện) — ở tab Luyện.",
 		"SƯƠNG MÙ: đen = chưa khám phá, mờ = đã qua (chỉ mờ đi, không đen lại), sáng = đang nhìn thấy.",
 	])

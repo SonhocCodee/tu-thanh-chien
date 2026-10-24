@@ -32,11 +32,25 @@ var direct_res: String = ""
 var move_point: Vector2 = Vector2.ZERO
 var holding: bool = false
 
-var _state: String = "idle" # idle | to_node | to_sheep | hunt | harvest | return | move_to | hold
+var _state: String = "idle" # idle | to_node | to_sheep | hunt | harvest | return | move_to | hold | to_build | build
 var _node: Node2D = null
 var _sheep: Sheep = null
 var _dropoff: Node2D = null # kho đang hướng về (thành chính / Nhà Kho) — test đọc được
 var _harvest_left: float = 0.0
+
+# --- Nhiệm vụ xây dựng (hệ thống xây mới): nông dân được cử TỚI TẬN công
+# trường đóng búa; tiến độ công trình chỉ chạy theo số thợ có mặt tại chỗ.
+# Việc cũ (phân bổ / lệnh trực tiếp / điểm giữ) được LƯU LẠI khi nhận nhiệm
+# vụ và khôi phục nguyên vẹn khi xây xong / công trình bị phá.
+var build_target: Building = null
+var _build_spot: Vector2 = Vector2.ZERO
+var _saved_assigned: String = ""
+var _saved_direct: bool = false
+var _saved_direct_node: Node2D = null
+var _saved_direct_sheep: Sheep = null
+var _saved_direct_res: String = ""
+var _saved_holding: bool = false
+var _saved_move_point: Vector2 = Vector2.ZERO
 var _anim: AnimatedSprite2D
 var _cur_anim: String = ""
 
@@ -68,6 +82,8 @@ func _build_frames() -> SpriteFrames:
 	_add_anim(sf, "axe", base + "pawn_axe.png", 6, 10.0)
 	_add_anim(sf, "pick", base + "pawn_pick.png", 6, 10.0)
 	_add_anim(sf, "knife", base + "pawn_knife.png", 4, 10.0)
+	_add_anim(sf, "hammer", base + "pawn_hammer.png", 3, 10.0)
+	_add_anim(sf, "run_hammer", base + "pawn_run_hammer.png", 6, 10.0)
 	return sf
 
 func _add_anim(sf: SpriteFrames, anim_name: String, tex_path: String, frames: int, fps: float) -> void:
@@ -92,6 +108,115 @@ func is_alive() -> bool:
 func is_direct() -> bool:
 	return direct
 
+# ===================== NHIỆM VỤ XÂY DỰNG =====================
+
+func is_building() -> bool:
+	return build_target != null
+
+## Đang đứng đóng búa TẠI công trường này (điều kiện để công trình tiến độ).
+func is_building_at(b: Building) -> bool:
+	return build_target == b and _state == "build"
+
+## Nhận nhiệm vụ xây 1 công trình: lưu việc cũ rồi đi tới công trường.
+## Đang xây dở công trình khác mà bị điều sang chỗ mới thì GIỮ NGUYÊN việc
+## gốc đã lưu (không ghi đè bằng trạng thái xây hiện tại).
+func assign_builder(b: Building) -> void:
+	if b == null:
+		return
+	if build_target == null:
+		_saved_assigned = assigned
+		_saved_direct = direct
+		_saved_direct_node = direct_node
+		_saved_direct_sheep = _sheep if direct else null
+		_saved_direct_res = direct_res
+		_saved_holding = holding
+		_saved_move_point = move_point
+	build_target = b
+	# Mỗi thợ đứng 1 góc quanh công trình (theo instance id cho khỏi chồng).
+	var ang := float(absi(get_instance_id()) % 8) * TAU / 8.0
+	_build_spot = b.global_position + Vector2(cos(ang), sin(ang)) * (b.radius + 16.0)
+	_state = "to_build"
+
+## Huỷ nhiệm vụ xây KHÔNG khôi phục (lệnh mới của người chơi thắng nhiệm vụ).
+func _abandon_build() -> void:
+	build_target = null
+	_saved_assigned = ""
+	_saved_direct = false
+	_saved_direct_node = null
+	_saved_direct_sheep = null
+	_saved_direct_res = ""
+	_saved_holding = false
+
+## Kết thúc nhiệm vụ xây (xây xong / công trình bị phá / mất thợ thay):
+## quay lại ĐÚNG việc cũ đã lưu — lệnh trực tiếp còn hiệu lực thì làm tiếp
+## lệnh đó, không thì về phân bổ cũ; việc cũ là điểm giữ thì đi lại về đó.
+func _finish_build_duty() -> void:
+	build_target = null
+	var sd := _saved_direct
+	var snode := _saved_direct_node
+	var ssheep := _saved_direct_sheep
+	var sassigned := _saved_assigned
+	var sholding := _saved_holding
+	var smove := _saved_move_point
+	_abandon_build()
+	if sd:
+		if ssheep != null and is_instance_valid(ssheep) and ssheep.alive:
+			set_direct_sheep(ssheep)
+			return
+		if snode != null and is_instance_valid(snode) and not (snode as ResourceNode).is_depleted():
+			set_direct(snode)
+			return
+		# Mục tiêu trực tiếp đã mất -> rơi về phân bổ hiện hành.
+		direct = false
+		direct_node = null
+		direct_res = ""
+		assigned = ""
+		_state = "idle"
+		if main_ref != null:
+			main_ref.rebalance_player(owner_pid)
+		return
+	if sholding:
+		assigned = sassigned
+		move_point = smove
+		_state = "move_to"
+		if main_ref != null:
+			main_ref.rebalance_player(owner_pid)
+		return
+	assigned = sassigned
+	if carrying > 0:
+		_state = "return"
+	elif assigned != "":
+		_state = "to_node"
+		_node = null
+	else:
+		_state = "idle"
+	# QUAN TRỌNG: trong lúc thợ đi xây, rebalance BỎ QUA thợ (bận) nên quota
+	# phân bổ có thể đã lệch (thợ khác lãnh việc đầu danh sách, quota cuối
+	# không ai nhận) và chủ phe đổi phân bổ thì thợ cũng không biết. Xây xong
+	# phải rebalance lại 1 lần cho TOÀN ĐỘI hội tụ về phân bổ HIỆN HÀNH —
+	# nếu không, thợ quay về việc cũ đã lỗi thời vĩnh viễn (bot kẹt kinh tế).
+	if main_ref != null:
+		main_ref.rebalance_player(owner_pid)
+
+func _step_to_build(delta: float) -> void:
+	if build_target == null or not is_instance_valid(build_target) or not build_target.is_alive() or build_target.constructed:
+		_finish_build_duty()
+		return
+	if global_position.distance_to(_build_spot) <= 12.0:
+		_state = "build"
+	else:
+		_move_toward(_build_spot, delta, "run_hammer")
+
+func _step_build(_delta: float) -> void:
+	if build_target == null or not is_instance_valid(build_target) or not build_target.is_alive() or build_target.constructed:
+		_finish_build_duty()
+		return
+	if global_position.distance_to(_build_spot) > 24.0:
+		_state = "to_build"
+		return
+	_play("hammer")
+	_face(build_target.global_position)
+
 func carry_anim() -> String:
 	# Đang vác gì thì hiện đúng hoạt ảnh vác loại đó.
 	match carrying_type:
@@ -113,6 +238,8 @@ func harvest_anim() -> String:
 	return "pick"
 
 func set_direct(node: Node2D) -> void:
+	if build_target != null:
+		_abandon_build() # lệnh trực tiếp mới thắng nhiệm vụ xây
 	holding = false
 	if node is Sheep:
 		set_direct_sheep(node as Sheep)
@@ -129,6 +256,8 @@ func set_direct(node: Node2D) -> void:
 		_state = "to_node"
 
 func set_direct_sheep(sheep: Sheep) -> void:
+	if build_target != null:
+		_abandon_build() # lệnh trực tiếp mới thắng nhiệm vụ xây
 	direct = true
 	direct_node = null
 	direct_res = "meat"
@@ -142,6 +271,8 @@ func set_direct_sheep(sheep: Sheep) -> void:
 		_state = "to_sheep"
 
 func set_move_point(point: Vector2) -> void:
+	if build_target != null:
+		_abandon_build() # lệnh di chuyển mới thắng nhiệm vụ xây
 	direct = false
 	direct_node = null
 	direct_res = ""
@@ -229,6 +360,10 @@ func _process(delta: float) -> void:
 			_step_harvest(delta)
 		"return":
 			_step_return(delta, castle)
+		"to_build":
+			_step_to_build(delta)
+		"build":
+			_step_build(delta)
 
 func _step_to_node(delta: float, castle: Castle) -> void:
 	if assigned == "":

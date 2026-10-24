@@ -8,6 +8,11 @@ var building_type: String = "house"
 var constructed: bool = false
 var build_left: float = 0.0
 var build_total: float = 1.0
+# Hệ thống xây mới: số thợ CẦN (theo Stats, nhỏ=1/lớn=2) — tiến độ chỉ
+# chạy theo số thợ đang đóng búa tại chỗ. stalled_warned: main đã báo
+# HUD "thiếu thợ" cho công trình này rồi (tránh spam mỗi chu kỳ rà soát).
+var builders_required: int = 1
+var stalled_warned: bool = false
 
 var _sprite: Sprite2D
 var _tex_normal: Texture2D
@@ -25,6 +30,7 @@ func setup(p_pid: int, p_type: String, p_color: String, p_main: Node) -> void:
 	radius = def["radius"]
 	build_total = def["build_time"]
 	build_left = build_total
+	builders_required = Stats.builders_required(p_type)
 	if p_type == "barracks":
 		producer_kind = "barracks"
 	display_hp = hp
@@ -98,12 +104,26 @@ func can_produce() -> bool:
 func is_valid_dropoff() -> bool:
 	return building_type == "storehouse" and constructed and is_alive()
 
+## Số thợ đang đóng búa TẠI công trình này ngay lúc này.
+func builders_on_site() -> int:
+	var n := 0
+	for vn in get_tree().get_nodes_in_group("villagers"):
+		var v := vn as Villager
+		if v.owner_pid == owner_pid and v.is_building_at(self):
+			n += 1
+	return n
+
 func _process(delta: float) -> void:
 	_update_fire()
 	if not is_alive() or main_ref == null or main_ref.match_over:
 		return
 	if not constructed:
-		build_left -= delta
+		# Tiến độ CHỈ chạy khi có thợ tại chỗ, tốc độ = thợ có mặt / thợ cần
+		# (đủ thợ = đúng build_time trong stats; thiếu 1/2 thợ = chậm một nửa;
+		# không có thợ = đứng yên giữ nguyên %, không tự xây theo đồng hồ).
+		var present := builders_on_site()
+		if present > 0:
+			build_left -= delta * float(present) / float(maxi(1, builders_required))
 		queue_redraw()
 		if build_left <= 0.0:
 			constructed = true

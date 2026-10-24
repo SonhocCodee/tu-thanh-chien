@@ -66,6 +66,7 @@ const BUILDINGS := {
 		"build_time": 12.0,
 		"hp": 250.0,
 		"radius": 42.0,
+		"size": "small",
 	},
 	"barracks": {
 		"label": "Doanh trại",
@@ -73,6 +74,7 @@ const BUILDINGS := {
 		"build_time": 20.0,
 		"hp": 400.0,
 		"radius": 55.0,
+		"size": "large",
 	},
 	"tower": {
 		"label": "Tháp canh",
@@ -80,6 +82,7 @@ const BUILDINGS := {
 		"build_time": 15.0,
 		"hp": 300.0,
 		"radius": 34.0,
+		"size": "large",
 		"tower_damage": 10.0,
 		"tower_range": 185.0,
 		"tower_cooldown": 1.1,
@@ -94,8 +97,23 @@ const BUILDINGS := {
 		"build_time": 10.0,
 		"hp": 300.0,
 		"radius": 40.0,
+		"size": "small",
 	},
 }
+
+# --- Thợ xây (M2 giai đoạn xây dựng mới): công trình chỉ tiến triển khi có
+# nông dân TỚI TẬN NƠI đóng búa. "size" trong BUILDINGS quyết định số thợ
+# cần: nhỏ = 1 thợ, lớn = 2 thợ. build_time trong BUILDINGS là thời gian
+# khi ĐỦ thợ; thiếu thợ thì chậm tỉ lệ (có mặt / cần). Nhà Lính (nhánh
+# nha-linh) khi gộp vào phải khai "size": "large".
+const BUILDER_COUNT := {
+	"small": 1,
+	"large": 2,
+}
+
+static func builders_required(building_type: String) -> int:
+	var size: String = str(BUILDINGS[building_type].get("size", "small"))
+	return int(BUILDER_COUNT.get(size, 1))
 
 # --- Thành chính ---
 const CASTLE := {

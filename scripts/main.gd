@@ -52,6 +52,11 @@ var m2demo_mode: bool = false
 var _m2demo_stage: int = 0
 var _m2demo_timer: float = 0.0
 var g2demo_mode: bool = false
+var builddemo_mode: bool = false
+var _demo_shot_busy: bool = false # đang chờ chụp ảnh demo (tránh chụp chồng)
+var _builddemo_stage: int = 0
+var _builddemo_timer: float = 0.0
+var _builddemo_site: Building = null
 var _g2demo_stage: int = 0
 var _g2demo_timer: float = 0.0
 var _g2_tree: ResourceNode = null
@@ -62,6 +67,8 @@ var _g2_scout_sent: bool = false
 
 var _rng := RandomNumberGenerator.new()
 var _fog_timer: float = 0.0
+var _build_timer: float = 0.0 # chu kỳ rà soát cử/bổ sung thợ xây (0.5s)
+var _land_map: TileMap = null # lớp ô ĐẤT (để kiểm tra đặt nhà trên đất)
 var _fog_overlay: Node2D = null
 var _zone_rect: Polygon2D = null
 var _units_layer: Node2D
@@ -83,6 +90,10 @@ func _ready() -> void:
 		Engine.time_scale = 3.0
 	if "--g2demo" in args:
 		g2demo_mode = true
+		bots_enabled = false
+		Engine.time_scale = 3.0
+	if "--builddemo" in args:
+		builddemo_mode = true
 		bots_enabled = false
 		Engine.time_scale = 3.0
 	_build_players()
@@ -108,6 +119,10 @@ func _process(delta: float) -> void:
 	if _fog_timer <= 0.0:
 		_fog_timer = float(Stats.FOG["update_interval"])
 		_update_fog()
+	_build_timer -= delta
+	if _build_timer <= 0.0:
+		_build_timer = 0.5
+		_build_tick()
 	_update_camera(delta)
 	if demo_mode:
 		_demo_update()
@@ -115,6 +130,8 @@ func _process(delta: float) -> void:
 		_demo_m2_update(delta)
 	if g2demo_mode:
 		_demo_g2_update(delta)
+	if builddemo_mode:
+		_demo_build_update(delta)
 
 # ===================== DỰNG BAN ĐẦU =====================
 
@@ -165,6 +182,7 @@ func _build_map() -> void:
 		for y in range(0, 15):
 			land_map.set_cell(0, Vector2i(x, y), 1, Vector2i(1, 1))
 	add_child(land_map)
+	_land_map = land_map
 	_units_layer = Node2D.new()
 	_units_layer.z_index = 10
 	add_child(_units_layer)
@@ -374,7 +392,7 @@ func _build_hud() -> void:
 	_hud.setup(self, human_controller())
 	add_child(_hud)
 	# Panel hướng dẫn tự mở khi vào trận (trừ chế độ demo chụp ảnh).
-	if not demo_mode and not m2demo_mode and not g2demo_mode:
+	if not demo_mode and not m2demo_mode and not g2demo_mode and not builddemo_mode:
 		_hud.show_help()
 
 # ===================== SƯƠNG MÙ =====================
@@ -491,6 +509,8 @@ func _rebalance_villagers(player: PlayerState) -> void:
 	# Nông dân đang làm theo LỆNH TRỰC TIẾP (click phải) được giữ nguyên:
 	# lệnh trực tiếp ưu tiên hơn phân bổ +/-. Số lượng direct theo từng loại
 	# được trừ vào chỉ tiêu phân bổ, phần còn lại chia cho nông dân chưa có lệnh.
+	# Nông dân đang ĐI XÂY cũng được giữ nguyên (bận như direct, nhưng không
+	# trừ vào chỉ tiêu tài nguyên nào) — xây xong họ tự về việc cũ đã lưu.
 	var list := _villagers_of(player.pid)
 	var want := [int(player.allocation["wood"]), int(player.allocation["stone"]), int(player.allocation["gold"]), int(player.allocation["meat"])]
 	var keys := ["wood", "stone", "gold", "meat"]
@@ -503,21 +523,62 @@ func _rebalance_villagers(player: PlayerState) -> void:
 	var idx := 0
 	for ki in 4:
 		for j in want[ki]:
-			while idx < list.size() and (list[idx] as Villager).is_direct():
+			while idx < list.size() and _is_busy_villager(list[idx]):
 				idx += 1
 			if idx >= list.size():
 				return
 			(list[idx] as Villager).set_assignment(keys[ki])
 			idx += 1
 	while idx < list.size():
-		if not (list[idx] as Villager).is_direct():
+		if not _is_busy_villager(list[idx]):
 			(list[idx] as Villager).set_assignment("")
 		idx += 1
 
+## Nông dân "bận không phân bổ lại được": đang theo lệnh trực tiếp hoặc
+## đang đi xây công trình.
+func _is_busy_villager(v: Villager) -> bool:
+	return v.is_direct() or v.is_building()
+
+## GIỮ LẠI cho tương thích (placement preview / code cũ có thể còn tham
+## chiếu) — luật đặt nhà MỚI không còn dùng vùng căn cứ này nữa.
 func base_zone(pid: int) -> Rect2:
 	var c: Vector2 = CASTLE_POS[pid]
 	var r := Rect2(c - Vector2(150, 115), Vector2(300, 230))
 	return r.intersection(Rect2(8, 8, WORLD.x - 16, WORLD.y - 16))
+
+## Điểm này có phải ĐẤT không (có ô đất trong lớp TileMap đất);
+## ngoài lưới ô / ô nước -> không phải đất.
+func is_land_pos(pos: Vector2) -> bool:
+	if _land_map == null:
+		return false
+	var cell := _land_map.local_to_map(pos)
+	return _land_map.get_cell_source_id(0, cell) != -1
+
+## ===== LUẬT ĐẶT NHÀ DUY NHẤT (hệ thống xây mới) =====
+## Mọi đường kiểm tra đặt nhà — handler click của người chơi, bot (qua
+## exec_place_building), và placement preview bám chuột — PHẢI gọi đúng
+## hàm này, không viết luật song song. Đặt TỰ DO (bỏ luật "gần thành"):
+## hợp lệ khi (a) thuộc vùng ĐÃ KHÁM PHÁ của phe đặt, (b) trên ĐẤT,
+## (c) không chồng lấn công trình / nút tài nguyên / cừu (khoảng đệm như
+## luật cũ), (d) trong biên map.
+func can_place_building_at(pid: int, pos: Vector2) -> bool:
+	if pos.x < 16.0 or pos.y < 16.0 or pos.x > WORLD.x - 16.0 or pos.y > WORLD.y - 16.0:
+		return false
+	if not is_pos_explored_for(pid, pos):
+		return false
+	if not is_land_pos(pos):
+		return false
+	for n in get_tree().get_nodes_in_group("structures"):
+		var s := n as Structure
+		if s.global_position.distance_to(pos) < 62.0:
+			return false
+	for n in get_tree().get_nodes_in_group("res_nodes"):
+		if (n as Node2D).global_position.distance_to(pos) < 48.0:
+			return false
+	for n in get_tree().get_nodes_in_group("sheep"):
+		if (n as Node2D).global_position.distance_to(pos) < 40.0:
+			return false
+	return true
 
 func build_slots(pid: int) -> Array:
 	var c: Vector2 = CASTLE_POS[pid]
@@ -537,23 +598,12 @@ func exec_place_building(player: PlayerState, building_type: String, pos: Vector
 	var def: Dictionary = Stats.BUILDINGS[building_type]
 	if not player.can_afford(def["cost"]):
 		return false
-	if building_type == "storehouse":
-		# Nhà Kho: đặt ở bất cứ vùng ĐÃ KHÁM PHÁ nào của phe mình (để kê
-		# gần bãi farm xa), không giới hạn vùng căn cứ như nhà thường.
-		if not is_pos_explored_for(player.pid, pos):
-			return false
-	elif not base_zone(player.pid).has_point(pos):
+	# Không còn nông dân nào sống -> không có người ra xây -> không cho đặt.
+	if villager_count(player.pid) == 0:
 		return false
-	for n in get_tree().get_nodes_in_group("structures"):
-		var s := n as Structure
-		if s.global_position.distance_to(pos) < 62.0:
-			return false
-	for n in get_tree().get_nodes_in_group("res_nodes"):
-		if (n as Node2D).global_position.distance_to(pos) < 48.0:
-			return false
-	for n in get_tree().get_nodes_in_group("sheep"):
-		if (n as Node2D).global_position.distance_to(pos) < 40.0:
-			return false
+	# Luật đặt nhà duy nhất (tự do, xem can_place_building_at).
+	if not can_place_building_at(player.pid, pos):
+		return false
 	player.pay(def["cost"])
 	var b := BuildingScene.instantiate() as Building
 	b.setup(player.pid, building_type, player.color_key, self)
@@ -561,7 +611,78 @@ func exec_place_building(player: PlayerState, building_type: String, pos: Vector
 	b.z_index = 5
 	add_child(b)
 	b.structure_destroyed.connect(_on_structure_destroyed)
+	# Cử thợ ra xây NGAY ở lớp thực thi — bot và người dùng chung 1 đường.
+	_assign_builders(b)
 	return true
+
+# ===================== THỢ XÂY (cử / bổ sung / rà soát) =====================
+
+## Số nông dân đang có nhiệm vụ xây công trình này (kể cả đang đi tới).
+func builders_assigned_count(b: Building) -> int:
+	var n := 0
+	for vn in get_tree().get_nodes_in_group("villagers"):
+		var v := vn as Villager
+		if v.owner_pid == b.owner_pid and v.build_target == b:
+			n += 1
+	return n
+
+## Cử thêm thợ cho tới khi đủ số cần (Stats.builders_required):
+## ưu tiên 1) người RẢNH gần công trường nhất (không phân bổ, không lệnh
+## trực tiếp, không đang giữ điểm); 2) nông dân đang farm (ưu tiên người
+## không vác hàng, rồi gần nhất). Nông dân có LỆNH TRỰC TIẾP của người
+## chơi không bị tự động rút (chỉ tới khi người chơi tự click cử đi xây).
+func _assign_builders(b: Building) -> void:
+	if b == null or b.constructed or not b.is_alive():
+		return
+	var need := b.builders_required - builders_assigned_count(b)
+	if need <= 0:
+		return
+	var site := b.global_position
+	var idle: Array = []
+	var farmers: Array = []
+	for vn in _villagers_of(b.owner_pid):
+		var v := vn as Villager
+		# Đang xây chỗ khác / lệnh trực tiếp / đang giữ điểm hoặc đang đi tới
+		# điểm người chơi chỉ định -> KHÔNG tự động rút (lệnh người chơi thắng).
+		if v.build_target != null or v.is_direct() or v.holding or v._state == "move_to":
+			continue
+		if v.assigned == "":
+			idle.append(v)
+		else:
+			farmers.append(v)
+	idle.sort_custom(func(x: Villager, y: Villager) -> bool:
+		return x.global_position.distance_squared_to(site) < y.global_position.distance_squared_to(site))
+	farmers.sort_custom(func(x: Villager, y: Villager) -> bool:
+		var cx := 1 if x.carrying > 0 else 0
+		var cy := 1 if y.carrying > 0 else 0
+		if cx != cy:
+			return cx < cy
+		return x.global_position.distance_squared_to(site) < y.global_position.distance_squared_to(site))
+	for v in idle + farmers:
+		if need <= 0:
+			break
+		(v as Villager).assign_builder(b)
+		need -= 1
+
+## Rà soát định kỳ: công trình nào thiếu thợ (thợ bị điều đi chỗ khác /
+## mất thợ) thì bổ sung từ nông dân đang có; công trình của NGƯỜI CHƠI mà
+## không có nổi 1 thợ được cử thì báo HUD 1 lần (tránh spam).
+func _build_tick() -> void:
+	for n in get_tree().get_nodes_in_group("buildings"):
+		var b := n as Building
+		if b.constructed or not b.is_alive():
+			continue
+		_assign_builders(b)
+		if b.owner_pid == HUMAN_PID and _hud != null:
+			if builders_assigned_count(b) == 0:
+				if not b.stalled_warned:
+					b.stalled_warned = true
+					if villager_count(HUMAN_PID) == 0:
+						_hud.show_message("%s tạm dừng xây: không còn nông dân nào!" % Stats.BUILDINGS[b.building_type]["label"])
+					else:
+						_hud.show_message("%s đang thiếu thợ xây — chọn nông dân rồi click phải vào công trình để cử đi xây." % Stats.BUILDINGS[b.building_type]["label"])
+			else:
+				b.stalled_warned = false
 
 func exec_queue_training(player: PlayerState, building: Structure, unit_type: String) -> bool:
 	if building.owner_pid != player.pid or not building.can_produce():
@@ -697,6 +818,34 @@ func enemy_structure_at(pos: Vector2) -> Structure:
 			best = s
 	return best
 
+## Công trình CỦA NGƯỜI CHƠI đang xây dở tại điểm bấm (để cử thợ xây tiếp).
+func own_unfinished_building_at(pos: Vector2) -> Building:
+	var best: Building = null
+	var best_d := 1e9
+	for n in get_tree().get_nodes_in_group("structures"):
+		var s := n as Structure
+		if s.owner_pid != HUMAN_PID or not s.is_alive() or not (s is Building):
+			continue
+		var b := s as Building
+		if b.constructed:
+			continue
+		var d := b.global_position.distance_to(pos)
+		if d <= b.radius + 14.0 and d < best_d:
+			best_d = d
+			best = b
+	return best
+
+## Lệnh trực tiếp: cử 1 nông dân tới xây tiếp 1 công trình đang xây dở.
+func exec_villager_build(player: PlayerState, v: Villager, b: Building) -> bool:
+	if v == null or v.owner_pid != player.pid or b == null or not is_instance_valid(b):
+		return false
+	if b.owner_pid != player.pid or b.constructed or not b.is_alive():
+		return false
+	if v.build_target == b:
+		return true
+	v.assign_builder(b)
+	return true
+
 func res_node_at(pos: Vector2, radius: float) -> ResourceNode:
 	var best: ResourceNode = null
 	var best_d := radius
@@ -760,7 +909,7 @@ func _update_camera(delta: float) -> void:
 		set_camera_to(_camera.position + pan.normalized() * CAM_SPEED * delta)
 	# Lia bằng mép màn hình (không lia khi đang kéo khung chọn, khi ở chế độ
 	# headless/test, khi đang demo chụp ảnh, và khi chuột đang ở trên nút/minimap).
-	if _dragging or demo_mode or m2demo_mode:
+	if _dragging or demo_mode or m2demo_mode or builddemo_mode:
 		return
 	if DisplayServer.get_name() == "headless":
 		return
@@ -1006,21 +1155,11 @@ func _end_match(won: bool) -> void:
 func set_placement_mode(building_type: String) -> void:
 	placing_type = building_type
 	awaiting_order = false
-	if building_type == "storehouse":
-		# Nhà Kho đặt được ở mọi vùng đã khám phá -> không hiện khung vùng căn cứ.
-		_zone_rect.visible = false
-		if _hud != null:
-			_hud.show_message("Bấm vào vùng ĐÃ KHÁM PHÁ bất kỳ để đặt Nhà Kho — điểm giao tài nguyên (chuột phải để huỷ).")
-		return
-	_zone_rect.polygon = PackedVector2Array([
-		base_zone(HUMAN_PID).position,
-		base_zone(HUMAN_PID).position + Vector2(base_zone(HUMAN_PID).size.x, 0),
-		base_zone(HUMAN_PID).end,
-		base_zone(HUMAN_PID).position + Vector2(0, base_zone(HUMAN_PID).size.y),
-	])
-	_zone_rect.visible = true
+	# Luật mới: MỌI nhà đặt được ở vùng ĐÃ KHÁM PHÁ bất kỳ trên đất (không
+	# còn khung vùng căn cứ) — nông dân sẽ tự ra tận nơi xây.
+	_zone_rect.visible = false
 	if _hud != null:
-		_hud.show_message("Bấm vào vùng sáng quanh thành để đặt %s (chuột phải để huỷ)." % Stats.BUILDINGS[building_type]["label"])
+		_hud.show_message("Bấm vào vùng ĐÃ KHÁM PHÁ bất kỳ trên đất để đặt %s — nông dân sẽ ra xây (chuột phải để huỷ)." % Stats.BUILDINGS[building_type]["label"])
 
 func cancel_modes() -> void:
 	placing_type = ""
@@ -1068,6 +1207,18 @@ func _handle_right_click(pos: Vector2) -> void:
 		else:
 			if _hud != null:
 				_hud.show_message("Mục tiêu chưa lộ diện — hãy cho quân trinh sát tới gần trước!")
+		return
+	# 2.2) Công trình CỦA MÌNH đang xây dở -> nông dân đang chọn tới xây tiếp.
+	var own_b := own_unfinished_building_at(pos)
+	if own_b != null:
+		var n_build := ctrl.order_selected_build(own_b)
+		if n_build > 0:
+			spawn_order_marker(own_b.global_position, Color(0.3, 1, 0.4))
+			if _hud != null:
+				_hud.show_message("Nông dân tới xây tiếp %s." % Stats.BUILDINGS[own_b.building_type]["label"])
+		else:
+			if _hud != null:
+				_hud.show_message("Hãy chọn NÔNG DÂN để cử đi xây (quân lính không xây nhà).")
 		return
 	# 2.5) Cừu đang SÁNG -> nông dân đi SĂN lấy thịt (chỉ nông dân săn được).
 	var sheep := sheep_at(pos, 36.0)
@@ -1123,9 +1274,15 @@ func _unhandled_input(event: InputEvent) -> void:
 			return
 		var pos := get_global_mouse_position()
 		if placing_type != "":
+			var label := str(Stats.BUILDINGS[placing_type]["label"])
 			var ok := human_controller().place_building(placing_type, pos)
 			if _hud != null:
-				_hud.show_message("Đã đặt %s." % Stats.BUILDINGS[placing_type]["label"] if ok else "Không đặt được ở đó (ngoài vùng/thiếu tài nguyên/trùng công trình).")
+				if ok:
+					_hud.show_message("Đã đặt %s — nông dân đang ra xây." % label)
+				elif villager_count(HUMAN_PID) == 0:
+					_hud.show_message("Không đặt được: không còn nông dân nào để cử đi xây!")
+				else:
+					_hud.show_message("Không đặt được ở đó (chưa khám phá/trên nước/thiếu tài nguyên/trùng công trình).")
 			if ok:
 				cancel_modes()
 			return
@@ -1395,6 +1552,77 @@ func _demo_g2_update(delta: float) -> void:
 				_g2demo_stage = 9
 		9:
 			get_tree().quit()
+
+# Chế độ chụp ảnh kiểm chứng HỆ THỐNG XÂY MỚI (--builddemo):
+# đặt 1 THÁP CANH (công trình LỚN = 2 thợ) ở vị trí XA thành (vùng vừa
+# "mở map" bằng reveal), chụp 3 cảnh: thợ đang đi ra công trường xa /
+# thợ đóng búa tại công trường / tháp hoàn thành ở xa thành.
+func _demo_build_update(delta: float) -> void:
+	if match_over or _demo_shot_busy:
+		return
+	_builddemo_timer += delta
+	match _builddemo_stage:
+		0:
+			var p: PlayerState = players[0]
+			for key in Stats.RES_KEYS:
+				p.add_resource(key, 3000)
+			# "Mở map" 1 vùng xa thành rồi đặt tháp ở đó (luật mới: vùng đã
+			# khám phá là đặt được, không cần gần thành như luật cũ).
+			fogs[0].reveal_circle(Vector2(760, 700), 210)
+			var ok := exec_place_building(p, "tower", Vector2(760, 700))
+			if not ok:
+				push_error("builddemo: đặt tháp xa thành THẤT BẠI")
+				get_tree().quit()
+				return
+			_builddemo_site = null
+			for n in get_tree().get_nodes_in_group("buildings"):
+				var b := n as Building
+				if b.owner_pid == 0 and b.building_type == "tower":
+					_builddemo_site = b
+			set_camera_to(Vector2(700, 600))
+			if _hud != null:
+				_hud.show_message("Build demo: tháp canh đặt XA thành — 2 thợ đang ra xây.")
+			_builddemo_stage = 1
+		1:
+			# Chờ 2 thợ ĐÃ VÀO vùng sáng quanh công trường (bán kính mở 210)
+			# nhưng còn đang đi — chụp lúc này mới THẤY người đang ra xây
+			# (đi qua vùng sương đen thì thợ bị sương che, không thấy gì).
+			if _builddemo_site != null and builders_assigned_count(_builddemo_site) >= 2:
+				var nearest := 1e9
+				var farthest := 0.0
+				for vn in _villagers_of(0):
+					var v := vn as Villager
+					if v.build_target == _builddemo_site:
+						var d := v.global_position.distance_to(_builddemo_site.global_position)
+						nearest = minf(nearest, d)
+						farthest = maxf(farthest, d)
+				if nearest > 95.0 and farthest < 200.0:
+					_demo_shot_busy = true
+					await _take_shot("res://screenshots/build_tho_ra_cong_truong.png")
+					_demo_shot_busy = false
+					_builddemo_stage = 2
+			if _builddemo_timer > 60.0:
+				get_tree().quit()
+		2:
+			# Chờ ĐỦ 2 thợ đứng đóng búa tại công trường.
+			if _builddemo_site != null and _builddemo_site.builders_on_site() >= 2:
+				set_camera_to(_builddemo_site.global_position)
+				_demo_shot_busy = true
+				await _take_shot("res://screenshots/build_dong_bua.png")
+				_demo_shot_busy = false
+				_builddemo_stage = 3
+		3:
+			# Chờ tháp hoàn thành ở vị trí xa thành.
+			if _builddemo_site != null and _builddemo_site.constructed:
+				set_camera_to(_builddemo_site.global_position)
+				if _hud != null:
+					_hud.show_message("Build demo: tháp canh HOÀN THÀNH ở xa thành.")
+				_demo_shot_busy = true
+				await _take_shot("res://screenshots/build_nha_xa_thanh.png")
+				_demo_shot_busy = false
+				get_tree().quit()
+			if _builddemo_timer > 200.0:
+				get_tree().quit()
 
 # ===================== LỚP PHỦ SƯƠNG MÙ (vẽ cho người chơi) =====================
 
