@@ -412,6 +412,12 @@ func _find_enemy_structure(range_px: float, player: PlayerState) -> Structure:
 		var s := n as Structure
 		if s == null or s.owner_pid == owner_pid or not s.is_alive():
 			continue
+		# Nha DANG XAY DO chua co hieu luc chien dau -> khong tu nham:
+		# neu nham, quan cong se farm 1 cong trinh re tien ma bot dich xay
+		# lai tai dung o do ngay khi vua pha (vong lap vo han, quan khong
+		# bao gio tien toi thanh — mot goc cua bug dung tran).
+		if s is Building and not (s as Building).constructed:
+			continue
 		var d := global_position.distance_to(s.global_position)
 		if d >= best_d:
 			continue

@@ -717,6 +717,12 @@ func can_place_building(player: PlayerState, building_type: String, pos: Vector2
 		return false
 	for n in get_tree().get_nodes_in_group("structures"):
 		var s := n as Structure
+		# Tàn tích (đã phá) KHÔNG chặn xây mới: trước đây ruin ở lại group
+		# mãi mãi nên ô của chính nó bị chặn vĩnh viễn — nhà bị phá là bot
+		# kẹt chuỗi xây tại bước đó, không bao giờ xây lại được (một gốc
+		# của bug đứng trận: cap quân kẹt 6 < ngưỡng tổng tấn công 8).
+		if not s.is_alive():
+			continue
 		if s.global_position.distance_to(pos) < 62.0:
 			return false
 	for n in get_tree().get_nodes_in_group("res_nodes"):
@@ -747,6 +753,12 @@ func exec_place_building(player: PlayerState, building_type: String, pos: Vector
 		return false
 	var def: Dictionary = Stats.BUILDINGS[building_type]
 	spend_resources(player, def["cost"])
+	# Dọn tàn tích NHÀ cũ trong vùng đặt: ruin không còn giá trị gameplay,
+	# để lại sẽ chồng hình với nhà mới vừa xây.
+	for n in get_tree().get_nodes_in_group("buildings"):
+		var rb := n as Building
+		if not rb.is_alive() and rb.global_position.distance_to(pos) < 62.0:
+			rb.queue_free()
 	var b := BuildingScene.instantiate() as Building
 	b.setup(player.pid, building_type, player.color_key, self)
 	b.position = pos

@@ -29,7 +29,12 @@ func _process(delta: float) -> void:
 	if target.has_method("get_aim_point"):
 		aim = target.get_aim_point()
 	var to := aim - global_position
-	if to.length() <= 14.0:
+	# Nguong trung dich phai bao ca BUOC BAY cua frame nay: o time_scale
+	# cao / may ban, speed*delta co the > 200px trong khi ban kinh trung
+	# co dinh 14px -> ten nhay qua dich, frame sau quay 180 do nhay lai,
+	# quay vong quanh dich VIEN KHONG TRUNG va khong tu huy (ro dan,
+	# khong gay dmg — mot goc cua bug dung tran tuy tai may).
+	if to.length() <= maxf(14.0, speed * delta):
 		target.take_damage(damage, owner_pid)
 		queue_free()
 		return
