@@ -1,6 +1,6 @@
 # TRẠNG THÁI TÍCH HỢP LAN (M3) — ĐÃ GỘP VÀO MAIN
 
-## BỔ SUNG (nhánh `phong-cho`, CHƯA gộp main): MENU PHÒNG CHỜ ĐẦY ĐỦ — giao thức v3
+## BỔ SUNG (nhánh `phong-cho` dc173ba, ĐÃ GỘP main): MENU PHÒNG CHỜ ĐẦY ĐỦ — giao thức v3
 
 Đợt riêng sau khi user hỏi "menu tạo phòng / mã code đâu": bản rút gọn
 (nối vào là có slot, chủ phòng = người nối đầu tiên) được thay bằng
