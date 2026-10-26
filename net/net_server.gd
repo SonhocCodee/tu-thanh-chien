@@ -4,9 +4,14 @@ extends Node
 ## NetServer — phía CHỦ NHÀ (chạy trong tiến trình server của game thật).
 ## Vai trò (mang khung từ prototype netproto/scripts/server.gd, thay SimWorld
 ## bằng Main THẬT):
-## - Phòng chờ: slot 0..3, token nối lại trong hạn grace 60s, chủ phòng =
-##   người kết nối đầu tiên, slot trống khi bắt đầu trận -> bot lấp (đúng
-##   thiết kế NET_DESIGN.md mục 3: bot là nguồn lệnh cắm vào PlayerController).
+## - Phòng chờ (giao thức v3): server giữ ĐÚNG 1 phòng. Người mở client
+##   đầu tiên bấm TẠO PHÒNG -> server sinh MÃ PHÒNG 6 ký tự, người đó làm
+##   chủ phòng (slot thấp nhất). Khách phải JOIN bằng mã đúng + tên hiển
+##   thị mới nhận slot mở. Chủ phòng đặt chế độ slot trống ("open" = chờ
+##   người, vào trận hoá bot nếu vẫn trống / "bot" = bot giữ chỗ /
+##   "closed" = phe không tham gia), đổi tên phòng, và là người duy nhất
+##   bấm được BẮT ĐẦU. Token nối lại trong hạn grace 60s như cũ (vào lại
+##   đúng slot cả ở lobby lẫn giữa trận, không cần mã).
 ## - Cổng lệnh: mọi lệnh mạng đều dịch net_id -> node rồi chạy qua
 ##   PlayerController của slot người gửi — KHÔNG chọc thẳng vào Main. Mã lý
 ##   do từ chối được suy từ chính các hàm luật của game (sương mù/tài
@@ -29,6 +34,11 @@ var _log_file: FileAccess = null
 
 var slots: Dictionary = {} # slot -> {peer,name,token,ready,connected,gone_at,is_host,bot}
 var peer_slot: Dictionary = {} # peer_id -> slot
+# Phòng chờ v3: room rỗng {} = CHƯA có phòng (client đang ở màn hình tạo/
+# vào phòng, chưa ai có slot). slot_modes chỉ áp cho slot TRỐNG (chưa có
+# người): "open" (mặc định) | "bot" | "closed".
+var room: Dictionary = {} # {"name": String, "code": String}
+var slot_modes: Dictionary = {} # slot (int) -> "open"|"bot"|"closed"
 var match_running: bool = false
 var _tick: int = 0
 var _snap_acc: float = 0.0
@@ -146,24 +156,15 @@ func handle_hello(peer_id: int, p_name: String, token: int, version: int) -> voi
 		session.rpc_id(peer_id, "welcome", {"slot": -1, "token": 0, "reclaimed": false, "is_host": false, "reason": "IN_MATCH"})
 		_logline("HELLO_LATE_REJECT peer=%d" % peer_id)
 		return
-	# Slot mới: trống thấp nhất. Chủ phòng = người đầu tiên khi chưa có chủ.
-	for slot in range(4):
-		if not slots.has(slot):
-			var new_token := _rng.randi_range(100000, 999999999)
-			var has_host := false
-			for s2 in slots.values():
-				if bool((s2 as Dictionary)["is_host"]):
-					has_host = true
-			slots[slot] = {"peer": peer_id, "name": p_name, "token": new_token, "ready": false,
-				"connected": true, "gone_at": 0.0, "is_host": not has_host, "bot": false}
-			peer_slot[peer_id] = slot
-			session.rpc_id(peer_id, "welcome", {"slot": slot, "token": new_token, "reclaimed": false,
-				"is_host": not has_host})
-			_logline("HELLO peer=%d slot=%d name=%s host=%s" % [peer_id, slot, p_name, str(not has_host)])
-			_broadcast_lobby()
-			return
-	session.rpc_id(peer_id, "welcome", {"slot": -1, "token": 0, "reclaimed": false, "is_host": false, "reason": "FULL"})
-	_logline("HELLO_FULL peer=%d" % peer_id)
+	# Giao thức v3: hello KHÔNG cấp slot nữa. Peer vào trạng thái "prejoin"
+	# (chưa ở trong phòng) — client hiện màn hình TẠO PHÒNG (chưa có phòng)
+	# hoặc NHẬP MÃ (đã có phòng), rồi gọi lobby_action create_room /
+	# join_room. Riêng nối lại bằng token ở trên đã xử lý trước nhánh này
+	# nên người rớt mạng không phải nhập lại mã.
+	session.rpc_id(peer_id, "welcome", {"slot": -3, "token": 0, "reclaimed": false, "is_host": false,
+		"prejoin": true, "room_exists": not room.is_empty(),
+		"room_name": String(room.get("name", ""))})
+	_logline("HELLO_PREJOIN peer=%d room=%s" % [peer_id, "yes" if not room.is_empty() else "no"])
 
 func handle_ready(peer_id: int) -> void:
 	if not peer_slot.has(peer_id):
@@ -174,14 +175,125 @@ func handle_ready(peer_id: int) -> void:
 	_broadcast_lobby()
 
 func handle_lobby_action(peer_id: int, action: Dictionary) -> void:
+	var act := String(action.get("action", ""))
+	# Hành động KHÔNG cần slot (peer đang prejoin): tạo phòng / vào phòng.
 	if not peer_slot.has(peer_id):
+		match act:
+			"create_room":
+				_create_room(peer_id, action)
+			"join_room":
+				_join_room(peer_id, action)
 		return
 	var slot := int(peer_slot[peer_id])
+	# Mọi hành động trong phòng dưới đây chỉ CHỦ PHÒNG có quyền — khách gọi
+	# thì từ chối TƯỜNG MINH (kèm hồi báo để client hiện lý do + log kiểm
+	# chứng đọc được), không im lặng như bản rút gọn.
 	if not bool(slots[slot].get("is_host", false)):
-		return # chỉ chủ phòng mới có quyền ở phòng chờ
-	match String(action.get("action", "")):
+		_lobby_fail(peer_id, act, NetProtocol.R_NOT_HOST)
+		_logline("LOBBY_REJECT slot=%d action=%s reason=NOT_HOST" % [slot, act])
+		if act == "start":
+			_logline("START_REJECT reason=NOT_HOST slot=%d" % slot)
+		return
+	match act:
 		"start":
 			_try_start(peer_id)
+		"set_slot":
+			var t := int(action.get("slot", -1))
+			var mode := String(action.get("mode", ""))
+			if t >= 0 and t < 4 and not slots.has(t) and ["open", "bot", "closed"].has(mode):
+				slot_modes[t] = mode
+				_logline("SET_SLOT slot=%d mode=%s" % [t, mode])
+				_broadcast_lobby()
+		"rename_room":
+			if not room.is_empty():
+				room["name"] = _clean_text(String(action.get("room_name", "")), "Phòng của chủ nhà", 40)
+				_logline("ROOM_RENAMED name=%s" % String(room["name"]))
+				_broadcast_lobby()
+
+## Hồi báo lỗi cho 1 hành động lobby qua kênh command_result quen thuộc
+## (client NetHud hiện câu thân thiện từ NetProtocol.reason_text).
+func _lobby_fail(peer_id: int, op: String, reason: String) -> void:
+	session.rpc_id(peer_id, "command_result", {"ok": false, "reason": reason, "op": op})
+
+## Cắt gọn 1 chuỗi người dùng nhập (tên người / tên phòng): bỏ khoảng
+## trắng thừa, giới hạn độ dài, rỗng -> dùng mặc định.
+func _clean_text(s: String, fallback: String, max_len: int) -> String:
+	var t := s.strip_edges()
+	if t == "":
+		t = fallback
+	if t.length() > max_len:
+		t = t.substr(0, max_len)
+	return t
+
+## MÃ PHÒNG: 6 ký tự chữ hoa + số, BỎ ký tự dễ đọc nhầm (0/O, 1/I).
+const CODE_ALPHABET := "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+func _gen_room_code() -> String:
+	var code := ""
+	for i in 6:
+		code += CODE_ALPHABET[_rng.randi_range(0, CODE_ALPHABET.length() - 1)]
+	return code
+
+## Cấp 1 slot cho peer (dùng chung tạo phòng / vào phòng): ghi sổ, gửi
+## welcome, log theo đúng định dạng HELLO cũ để log kiểm chứng đọc được.
+## open_only = true (khách vào phòng): chỉ nhận slot đang ở chế độ "open".
+func _assign_slot(peer_id: int, p_name: String, is_host: bool, open_only: bool = false) -> int:
+	for slot in range(4):
+		if not slots.has(slot) and (not open_only or String(slot_modes.get(slot, "open")) == "open"):
+			var new_token := _rng.randi_range(100000, 999999999)
+			slots[slot] = {"peer": peer_id, "name": p_name, "token": new_token, "ready": false,
+				"connected": true, "gone_at": 0.0, "is_host": is_host, "bot": false}
+			peer_slot[peer_id] = slot
+			session.rpc_id(peer_id, "welcome", {"slot": slot, "token": new_token, "reclaimed": false,
+				"is_host": is_host})
+			_logline("HELLO peer=%d slot=%d name=%s host=%s" % [peer_id, slot, p_name, str(is_host)])
+			_broadcast_lobby()
+			return slot
+	return -1
+
+func _create_room(peer_id: int, action: Dictionary) -> void:
+	if match_running:
+		_lobby_fail(peer_id, "create_room", NetProtocol.R_NOT_IN_MATCH)
+		return
+	if not room.is_empty():
+		_lobby_fail(peer_id, "create_room", NetProtocol.R_ROOM_EXISTS)
+		_logline("CREATE_REJECT peer=%d reason=ROOM_EXISTS" % peer_id)
+		return
+	room = {"name": _clean_text(String(action.get("room_name", "")), "Phòng của chủ nhà", 40),
+		"code": _gen_room_code()}
+	slot_modes.clear()
+	var p_name := _clean_text(String(action.get("name", "")), "Người chơi", 24)
+	_logline("ROOM_CREATED code=%s room=%s host_peer=%d" % [String(room["code"]), String(room["name"]), peer_id])
+	_assign_slot(peer_id, p_name, true)
+
+func _join_room(peer_id: int, action: Dictionary) -> void:
+	if room.is_empty():
+		_lobby_fail(peer_id, "join_room", NetProtocol.R_NO_ROOM)
+		_logline("JOIN_REJECT peer=%d reason=NO_ROOM" % peer_id)
+		return
+	if match_running:
+		_lobby_fail(peer_id, "join_room", NetProtocol.R_NOT_IN_MATCH)
+		return
+	var code := String(action.get("code", "")).strip_edges().to_upper()
+	if code != String(room["code"]):
+		_lobby_fail(peer_id, "join_room", NetProtocol.R_WRONG_CODE)
+		_logline("JOIN_REJECT peer=%d reason=WRONG_CODE" % peer_id)
+		return
+	# Chỉ slot "open" (chờ người) mới nhận khách — slot chủ phòng đã đặt
+	# BOT/ĐÓNG thì giữ nguyên ý chủ phòng.
+	var free_open := false
+	for slot in range(4):
+		if not slots.has(slot) and String(slot_modes.get(slot, "open")) == "open":
+			free_open = true
+	if not free_open:
+		_lobby_fail(peer_id, "join_room", NetProtocol.R_ROOM_FULL)
+		_logline("JOIN_REJECT peer=%d reason=ROOM_FULL" % peer_id)
+		return
+	var p_name := _clean_text(String(action.get("name", "")), "Người chơi", 24)
+	# Chủ phòng luôn tồn tại khi phòng còn (người tạo phòng); phòng mất chủ
+	# (chủ thoát hẳn sau grace — xem _grace_sweep) thì hoặc đã có người
+	# được thăng chủ, hoặc phòng đã giải tán (không tới được nhánh này).
+	_assign_slot(peer_id, p_name, false, true)
 
 func _lobby_state() -> Dictionary:
 	var view := {}
@@ -191,8 +303,12 @@ func _lobby_state() -> Dictionary:
 			view[slot] = {"name": String(s["name"]), "kind": "human", "ready": bool(s["ready"]),
 				"connected": bool(s["connected"]), "is_host": bool(s["is_host"])}
 		else:
-			view[slot] = {"name": "", "kind": "bot", "ready": true, "connected": false, "is_host": false}
-	return {"slots": view, "match_running": match_running}
+			# Slot trống mang CHẾ ĐỘ chủ phòng đã đặt: open/bot/closed.
+			view[slot] = {"name": "", "kind": String(slot_modes.get(slot, "open")), "ready": true,
+				"connected": false, "is_host": false}
+	return {"room": {"exists": not room.is_empty(), "name": String(room.get("name", "")),
+			"code": String(room.get("code", ""))},
+		"slots": view, "match_running": match_running}
 
 func _broadcast_lobby() -> void:
 	session.rpc("lobby_update", _lobby_state())
@@ -205,6 +321,8 @@ func _match_started_payload() -> Dictionary:
 		if slots.has(slot):
 			kind = "human"
 			nm = String(slots[slot]["name"])
+		elif String(slot_modes.get(slot, "open")) == "closed":
+			kind = "closed"
 		infos.append({"slot": slot, "name": nm, "kind": kind})
 	var castles := {}
 	for pid in range(4):
@@ -215,23 +333,36 @@ func _match_started_payload() -> Dictionary:
 func _try_start(host_peer: int) -> void:
 	if match_running:
 		return
-	for slot in slots.keys():
-		var s: Dictionary = slots[slot]
-		if bool(s["connected"]) and not bool(s["ready"]):
-			session.rpc_id(host_peer, "command_result", {"ok": false, "reason": "NOT_READY", "op": "start"})
-			_logline("START_REJECT reason=NOT_READY slot=%d" % slot)
-			return
+	# Điều kiện bắt đầu (v3): chủ phòng bấm là đi — KHÔNG chờ mọi người
+	# "sẵn sàng" như bản rút gọn (cờ ready giờ chỉ để hiển thị). Rào duy
+	# nhất: phải có ít nhất 2 PHE HOẠT ĐỘNG (người thật + slot bot/open),
+	# vì slot ĐÓNG bị loại khỏi trận — 1 phe đánh 1 mình thì thắng ngay
+	# ở giây 0 theo luật đếm phe còn sống.
+	var active := 0
+	for slot in range(4):
+		if slots.has(slot) or String(slot_modes.get(slot, "open")) != "closed":
+			active += 1
+	if active < 2:
+		session.rpc_id(host_peer, "command_result", {"ok": false, "reason": NetProtocol.R_NEED_RIVAL, "op": "start"})
+		_logline("START_REJECT reason=NEED_RIVAL active=%d" % active)
+		return
 	_start_match()
 
 func _start_match() -> void:
-	# Slot trống hẳn -> bot lấp ngay (bot là nguồn lệnh qua PlayerController).
-	# Slot CÓ người nhưng đang rớt mạng: giữ phe thụ động chờ nối lại trong
-	# hạn grace — quá hạn _grace_sweep mới chuyển bot tiếp quản (tránh 2 nguồn
-	# lệnh cùng điều khiển 1 phe khi người đó quay lại).
+	# Slot trống (open/bot) -> bot lấp ngay (bot là nguồn lệnh qua
+	# PlayerController). Slot CÓ người nhưng đang rớt mạng: giữ phe thụ
+	# động chờ nối lại trong hạn grace — quá hạn _grace_sweep mới chuyển
+	# bot tiếp quản (tránh 2 nguồn lệnh cùng điều khiển 1 phe).
+	# Slot ĐÓNG: phe bị loại khỏi trận qua ĐÚNG đường loại phe tự nhiên
+	# của game (xem dưới) — không bot, không điều khiển bởi ai.
 	var bot_pids: Array = []
+	var closed_pids: Array = []
 	for slot in range(4):
 		if not slots.has(slot):
-			bot_pids.append(slot)
+			if String(slot_modes.get(slot, "open")) == "closed":
+				closed_pids.append(slot)
+			else:
+				bot_pids.append(slot)
 	game.spawn_bots_for(bot_pids)
 	if test_grant:
 		# Harness kiểm chứng cần phe người đủ giàu để đi hết đường lệnh
@@ -242,6 +373,21 @@ func _start_match() -> void:
 			for k in Stats.RES_KEYS:
 				game.grant_resource(int(slot), k, 2000)
 		_logline("TESTGRANT applied slots=%s" % str(slots.keys()))
+	# Slot ĐÓNG -> loại phe qua ĐÚNG đường loại phe tự nhiên của game:
+	# phá thành của phe đó bằng take_damage (silent_destroy để không phát
+	# nổ) -> signal structure_destroyed -> Main._on_structure_destroyed ->
+	# _eliminate_player: thành hoá tàn tích, quân/nông dân khởi đầu tan
+	# rã, tài nguyên về 0 — phe coi như đã bị hạ ở giây 0, nhất quán
+	# tuyệt đối với một phe thua giữa trận (bot chỉ nhắm phe còn sống,
+	# thắng/thua đếm theo phe còn sống). Làm TRƯỚC khi thả match_over;
+	# cổng NEED_RIVAL ở _try_start bảo đảm còn >= 2 phe sống nên
+	# _eliminate_player không tự kết thúc trận ngay tại đây.
+	for slot in closed_pids:
+		var castle := game.castles.get(slot) as Castle
+		if castle != null:
+			castle.silent_destroy = true
+			castle.take_damage(1000000.0, -1)
+		_logline("SLOT_CLOSED_ELIMINATED slot=%d" % slot)
 	match_running = true
 	_tick = 0
 	_snap_acc = 0.0
@@ -972,9 +1118,27 @@ func _grace_sweep() -> void:
 				_logline("SLOT_TO_BOT slot=%d" % slot)
 				changed = true
 			elif not match_running:
+				var was_host := bool(s.get("is_host", false))
 				slots.erase(slot)
 				_logline("SLOT_FREED slot=%d" % slot)
 				changed = true
+				# Chủ phòng thoát hẳn khỏi lobby: thăng chủ cho người còn
+				# lại có slot thấp nhất để phòng không chết theo; không
+				# còn ai thì GIẢI TÁN phòng (mã hết hiệu lực, client đang
+				# prejoin được broadcast về màn hình tạo phòng).
+				if was_host and not room.is_empty():
+					var promoted := -1
+					for s2 in range(4):
+						if slots.has(s2):
+							promoted = s2
+							break
+					if promoted >= 0:
+						slots[promoted]["is_host"] = true
+						_logline("HOST_PROMOTED slot=%d" % promoted)
+					else:
+						room = {}
+						slot_modes.clear()
+						_logline("ROOM_DISSOLVED reason=no_humans")
 	if changed:
 		_broadcast_lobby()
 

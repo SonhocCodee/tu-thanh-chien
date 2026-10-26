@@ -31,9 +31,18 @@ var my_ready: bool = false
 var lobby_slots: Dictionary = {}
 var match_running: bool = false
 var player_you: Dictionary = {}
+# Phòng chờ v3: prejoin = đã nối WS nhưng CHƯA ở trong phòng (màn hình
+# tạo phòng / nhập mã). room_info = {"exists","name","code"} do server
+# gửi (lobby_update mang sang cả khi prejoin). lobby_error = câu lỗi gần
+# nhất của luồng lobby (sai mã / không phải chủ phòng...) để HUD hiện.
+var prejoin: bool = false
+var room_info: Dictionary = {"exists": false, "name": "", "code": ""}
+var lobby_error: String = ""
 
 var _url: String = "ws://127.0.0.1:8910"
 var _my_name: String = "Người chơi"
+var _roomcode: String = "" # CHỈ autotest: mã phòng lấy từ server log qua tham số
+var _wrongcode: String = "" # CHỈ autotest C: mã sai để kiểm chứng bị từ chối
 var _token: int = 0
 var _tokenfile: String = ""
 var _connected: bool = false
@@ -77,6 +86,8 @@ func start(p_session: Node, p_game: Node) -> void:
 	_my_name = String(params.get("name", "Khách web" if OS.has_feature("web") else "Người chơi"))
 	_tokenfile = String(params.get("tokenfile", ""))
 	_autotest = String(params.get("autotest", ""))
+	_roomcode = String(params.get("roomcode", ""))
+	_wrongcode = String(params.get("wrongcode", ""))
 	_expect_reclaim = String(params.get("expect_reclaim", "")) == "true"
 	_netlog_path = String(params.get("netlog", ""))
 	_shotdir = String(params.get("shotdir", ""))
@@ -156,12 +167,45 @@ func handle_welcome(data: Dictionary) -> void:
 		_logline("WELCOME_VERSION_REJECT")
 		hud.refresh_lobby()
 		return
+	if new_slot == -3:
+		# PREJOIN (giao thức v3): đã nối WS, chưa ở trong phòng. Server
+		# cho biết phòng đã có hay chưa để client hiện đúng màn hình.
+		prejoin = true
+		room_info = {"exists": bool(data.get("room_exists", false)),
+			"name": String(data.get("room_name", "")), "code": ""}
+		if bool(room_info["exists"]):
+			conn_status = "Đã nối tới chủ nhà — phòng \"%s\" đang mở, nhập MÃ PHÒNG để vào." % String(room_info["name"])
+		else:
+			conn_status = "Đã nối tới chủ nhà — chưa có phòng nào, hãy TẠO PHÒNG mới."
+		_logline("PREJOIN room_exists=%s" % str(room_info["exists"]))
+		hud.show_entry()
+		if _autotest == "" and _shotdir != "":
+			_take_shot_deferred("net_entry.png") # chụp màn hình tạo/nhập mã khi chạy tay bằng xvfb
+		# Kịch bản kiểm chứng tự động cho luồng phòng:
+		if _autotest == "A" and not bool(room_info["exists"]):
+			ui_create_room(_my_name, "Phòng kiểm chứng")
+		elif _autotest == "B":
+			ui_join_room(_my_name, _roomcode)
+		elif _autotest == "C":
+			if _wrongcode != "":
+				_pending.append("join_wrong")
+				session.rpc_id(1, "submit_lobby_action", {"action": "join_room", "name": _my_name, "code": _wrongcode})
+			else:
+				ui_join_room(_my_name, _roomcode)
+		return
 	if new_slot < 0:
 		_stopped = true
 		conn_status = "Không vào được phòng (đầy hoặc trận đã bắt đầu)."
 		_logline("WELCOME_REJECT reason=%s" % String(data.get("reason", "")))
+		if _autotest == "E":
+			# Ca kiểm chứng: người mới nối vào GIỮA trận phải bị từ chối.
+			_at_flags["late_reject"] = String(data.get("reason", "")) == "IN_MATCH"
+			_at_finish_report()
+			_quit_in = 1.5
 		hud.refresh_lobby()
 		return
+	prejoin = false
+	lobby_error = ""
 	slot = new_slot
 	_token = int(data.get("token", 0))
 	is_host = bool(data.get("is_host", false))
@@ -178,6 +222,14 @@ func handle_welcome(data: Dictionary) -> void:
 		_at_flags["reclaim"] = true
 		_awaiting_resync = true
 		print("AUTOTEST reclaim=1")
+	if reclaimed and _autotest == "C2":
+		# Nối lại lúc còn ở LOBBY (trận chưa bắt đầu) cũng phải đúng slot.
+		_at_flags["lobby_reclaim"] = true
+	if _autotest == "C":
+		# Khách thử bấm BẮT ĐẦU ngay khi vừa vào phòng: server phải từ
+		# chối NOT_HOST (kết quả về qua command_result, thẻ "start_guest").
+		_pending.append("start_guest")
+		session.rpc_id(1, "submit_lobby_action", {"action": "start"})
 	if _autotest != "":
 		_ready_in = 0.5
 	hud.refresh_lobby()
@@ -199,24 +251,71 @@ func _save_token() -> void:
 
 func handle_lobby(state: Dictionary) -> void:
 	lobby_slots = state.get("slots", {})
+	room_info = state.get("room", room_info)
 	if lobby_slots.has(slot):
 		my_ready = bool((lobby_slots[slot] as Dictionary).get("ready", false))
-	hud.refresh_lobby()
-	# Autotest: CHỦ PHÒNG (dù là client nào — thứ tự nối quyết định slot/chủ
-	# phòng, không phải vai kịch bản) bấm Bắt đầu khi mọi người đã sẵn sàng.
-	if _autotest != "" and is_host and not match_running and not bool(_at_flags.get("start_sent", false)):
-		var all_ready := true
-		var humans := 0
+	if match_running:
+		return # giữa trận, lobby_update chỉ còn là nhịp giữ trạng thái
+	if prejoin:
+		hud.refresh_entry()
+	else:
+		hud.refresh_lobby()
+	# Autotest C/C2: ghi nhận khi thấy 1 slot bị chủ phòng ĐÓNG.
+	if _autotest == "C" or _autotest == "C2":
 		for s in lobby_slots.keys():
-			var info: Dictionary = lobby_slots[s]
-			if String(info.get("kind", "")) == "human":
-				humans += 1
+			if String((lobby_slots[s] as Dictionary).get("kind", "")) == "closed":
+				_at_flags["slot_closed_seen"] = true
+	# Autotest A (CHỦ PHÒNG): đánh giá điều kiện phòng chờ — hàm eval
+	# cũng được _process gọi mỗi frame vì mốc "giữ điều kiện 8 giây"
+	# cần nhịp thời gian liên tục (lobby_update là sự kiện rời rạc,
+	# sau thay đổi cuối cùng sẽ không còn sự kiện nào để mà bấm bắt đầu).
+	if _autotest == "A" and is_host and not match_running:
+		_at_lobby_host_eval(0.0)
+
+## Đánh giá phòng chờ phía autotest A: đủ 3 người thì ĐÓNG slot trống
+## còn lại; khi lệnh đóng đã có hiệu lực + mọi người ĐANG NỐI đều sẵn
+## sàng, GIỮ điều kiện đó liên tục 8 giây mới bấm Bắt đầu — cửa sổ 8s
+## là để kịch bản kịp GIẾT C giữa lobby rồi nối lại bằng token (C2)
+## trước khi trận bắt đầu (bấm ngay khi đủ người là cuộc đua với thao
+## tác giết/nối lại, kết quả lật theo nhịp máy).
+var _at_start_hold: float = 0.0
+
+func _at_lobby_host_eval(delta: float) -> void:
+	var humans := 0
+	var connected_humans := 0
+	var all_connected_ready := true
+	var empty_open_slot := -1
+	for s in lobby_slots.keys():
+		var info: Dictionary = lobby_slots[s]
+		var kind := String(info.get("kind", ""))
+		if kind == "human":
+			humans += 1
+			if bool(info.get("connected", false)):
+				connected_humans += 1
 				if not bool(info.get("ready", false)):
-					all_ready = false
-		if all_ready and humans >= 2:
+					all_connected_ready = false
+		elif kind == "open" and empty_open_slot < 0:
+			empty_open_slot = int(s)
+	if humans >= 3 and empty_open_slot >= 0 and not bool(_at_flags.get("set_slot_sent", false)):
+		_at_flags["set_slot_sent"] = true
+		_at_flags["closed_slot"] = empty_open_slot
+		session.rpc_id(1, "submit_lobby_action", {"action": "set_slot", "slot": empty_open_slot, "mode": "closed"})
+		_logline("AUTOTEST_SET_SLOT_CLOSED slot=%d" % empty_open_slot)
+	var cs := int(_at_flags.get("closed_slot", -1))
+	if cs >= 0 and lobby_slots.has(cs) and String((lobby_slots[cs] as Dictionary).get("kind", "")) == "closed":
+		_at_flags["slot_closed_ok"] = true
+	if humans >= 3 and not bool(_at_flags.get("shot_lobby_full", false)):
+		_at_flags["shot_lobby_full"] = true
+		_take_shot_deferred("net_lobby_A.png") # lobby đủ người + mã phòng + slot đã đóng
+	var cond_ok := bool(_at_flags.get("slot_closed_ok", false)) and connected_humans >= 3 and all_connected_ready
+	if cond_ok and not bool(_at_flags.get("start_sent", false)):
+		_at_start_hold += delta
+		if _at_start_hold >= 8.0:
 			_at_flags["start_sent"] = true
 			session.rpc_id(1, "submit_lobby_action", {"action": "start"})
 			_logline("AUTOTEST_START_SENT")
+	elif not cond_ok:
+		_at_start_hold = 0.0
 
 func handle_match_started(data: Dictionary) -> void:
 	_match_info = data
@@ -254,6 +353,11 @@ func handle_explored(data: PackedByteArray) -> void:
 func handle_result(res: Dictionary) -> void:
 	if controller != null:
 		controller._on_result(res)
+	else:
+		# Chưa có controller (controller chỉ sinh khi đã nhận slot) mà
+		# server vẫn hồi báo cho các hành động LOBBY (vào phòng sai mã,
+		# khách bấm bắt đầu...) — xử lý thẳng tại đây, đừng đánh rơi.
+		_on_cmd_result(bool(res.get("ok", false)), String(res.get("reason", "")), String(res.get("op", "")))
 
 func handle_match_ended(data: Dictionary) -> void:
 	_ended = true
@@ -277,7 +381,16 @@ func _on_cmd_result(ok: bool, reason: String, op: String) -> void:
 		tag = String(_pending.pop_front())
 	_logline("RESULT tag=%s op=%s ok=%s reason=%s" % [tag, op, str(ok), reason])
 	if not ok:
-		hud.show_message(NetProtocol.reason_text(reason))
+		if match_running:
+			hud.show_message(NetProtocol.reason_text(reason))
+		else:
+			# Lỗi của luồng phòng chờ (sai mã, không phải chủ phòng, thiếu
+			# đối thủ...) hiện ngay trên màn hình phòng, không phải HUD trận.
+			lobby_error = NetProtocol.reason_text(reason)
+			if prejoin:
+				hud.refresh_entry()
+			else:
+				hud.refresh_lobby()
 	_at_apply_result(tag, ok, reason)
 
 # ============================ SƯƠNG MÙ PHÍA CLIENT ============================
@@ -344,6 +457,24 @@ func ui_ready() -> void:
 func ui_start() -> void:
 	if is_host:
 		session.rpc_id(1, "submit_lobby_action", {"action": "start"})
+
+# ---------------- PHÒNG CHỜ v3: tạo phòng / vào phòng / slot ----------------
+
+func ui_create_room(p_name: String, room_name: String) -> void:
+	lobby_error = ""
+	session.rpc_id(1, "submit_lobby_action", {"action": "create_room", "name": p_name, "room_name": room_name})
+
+func ui_join_room(p_name: String, code: String) -> void:
+	lobby_error = ""
+	session.rpc_id(1, "submit_lobby_action", {"action": "join_room", "name": p_name, "code": code})
+
+func ui_set_slot_mode(target_slot: int, mode: String) -> void:
+	if is_host:
+		session.rpc_id(1, "submit_lobby_action", {"action": "set_slot", "slot": target_slot, "mode": mode})
+
+func ui_rename_room(room_name: String) -> void:
+	if is_host:
+		session.rpc_id(1, "submit_lobby_action", {"action": "rename_room", "room_name": room_name})
 
 func ui_alloc(res_key: String, delta_sign: int) -> void:
 	if controller == null:
@@ -637,6 +768,8 @@ func _process(delta: float) -> void:
 		if _ready_in <= 0.0:
 			_ready_in = -1.0
 			ui_ready()
+	if _autotest == "A" and is_host and not match_running and slot >= 0:
+		_at_lobby_host_eval(delta) # nhịp thời gian cho mốc giữ điều kiện 8s
 	if _quit_in >= 0.0:
 		_quit_in -= delta
 		if _quit_in <= 0.0:
@@ -668,6 +801,18 @@ func _at_apply_result(tag: String, ok: bool, reason: String) -> void:
 	if _autotest == "":
 		return
 	match tag:
+		"join_wrong":
+			# Ca phòng chờ v3: vào phòng bằng MÃ SAI phải bị WRONG_CODE,
+			# sau đó vào lại bằng mã đúng (kết quả là welcome, không phải
+			# command_result).
+			_at_flags["wrong_code_reject"] = (not ok and reason == NetProtocol.R_WRONG_CODE)
+			if bool(_at_flags["wrong_code_reject"]):
+				print("AUTOTEST wrong_code_reject=1")
+				ui_join_room(_my_name, _roomcode)
+		"start_guest":
+			_at_flags["start_guest_reject"] = (not ok and reason == NetProtocol.R_NOT_HOST)
+			if bool(_at_flags["start_guest_reject"]):
+				print("AUTOTEST start_guest_reject=1")
 		"train":
 			_at_flags["train_ok"] = ok
 		"build":
@@ -735,11 +880,30 @@ func _my_castle_ghost() -> NetGhost:
 	return world.ghost(slot + 1)
 
 func _enemy_human_slot() -> int:
+	# Địch người GẦN THÀNH MÌNH NHẤT: kịch bản B phải cho trinh sát đi
+	# hết đường và lộ thành trong thời lượng phiên — chọn địch xa nhất
+	# (chéo map) thì lính trinh sát dễ chết dọc đường vì quân giữ nhà
+	# của các phe nó đi ngang, mốc lộ thành không bao giờ đạt.
+	var castles: Dictionary = _match_info.get("castles", {})
+	var mine := Vector2(1e9, 1e9)
+	if castles.has(slot):
+		var mp: Array = castles[slot]
+		mine = Vector2(float(mp[0]), float(mp[1]))
+	var best := -1
+	var best_d := 1e18
 	var infos: Array = _match_info.get("slots", [])
 	for info in infos:
-		if int((info as Dictionary).get("slot", -1)) != slot and String((info as Dictionary).get("kind", "")) == "human":
-			return int((info as Dictionary)["slot"])
-	return -1
+		var s := int((info as Dictionary).get("slot", -1))
+		if s == slot or String((info as Dictionary).get("kind", "")) != "human":
+			continue
+		var d := 0.0
+		if castles.has(s):
+			var ep: Array = castles[s]
+			d = mine.distance_squared_to(Vector2(float(ep[0]), float(ep[1])))
+		if d < best_d:
+			best_d = d
+			best = s
+	return best
 
 func _at_tick() -> void:
 	if _autotest == "A":
