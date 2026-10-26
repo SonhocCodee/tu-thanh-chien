@@ -27,17 +27,25 @@ A. MAY CHU NHA LA WINDOWS (lam theo thu tu)
           — do la IP LAN cua may ban. Hay nho so nay.
           (Neu co nhieu dong: chon dong bat dau bang 192.168. hoac
           10. — dong dang 172. la cua may ao/VPN, dung gui dong do.)
-  Buoc 4: Gui cho ban be CUNG WIFI voi ban duong dan:
-              http://<IP-o-buoc-3>:8911/?lan=1
-          Vi du: http://192.168.1.8:8911/?lan=1
-          Ban be chi can mo bang trinh duyet (Chrome/Edge/Firefox),
-          KHONG can cai gi them, KHONG can tai khoan.
-  Buoc 5: Ban (chu nha) choi cung: mo trinh duyet tren chinh may
+  Buoc 4: Ban (chu nha) choi cung: mo trinh duyet tren chinh may
           minh toi:
               http://localhost:8911/?lan=1
-  Buoc 6: Trong phong cho: nguoi ket noi dau tien la CHU PHONG.
-          Moi nguoi bam SAN SANG, chu phong bam BAT DAU TRAN.
-          Slot trong se do BOT lap (toi da 4 phe).
+          Trong man hinh choi LAN, bam TAO PHONG (dat ten phong neu
+          muon). Game se hien MA PHONG gom 6 ky tu — nho ma nay.
+  Buoc 5: Gui cho ban be CUNG WIFI voi ban HAI thu:
+            (1) duong dan:  http://<IP-o-buoc-3>:8911/?lan=1
+                Vi du: http://192.168.1.8:8911/?lan=1
+            (2) MA PHONG o Buoc 4.
+          Ban be chi can mo bang trinh duyet (Chrome/Edge/Firefox),
+          KHONG can cai gi them, KHONG can tai khoan.
+  Buoc 6: Ban be mo duong dan -> nhap TEN HIEN THI + MA PHONG ->
+          bam VAO PHONG. Sai ma thi game bao loi va khong cho vao.
+  Buoc 7: O phong cho, chu phong thay danh sach 4 slot. Bam nut
+          CHE DO o slot trong de doi: CHO NGUOI (ai co ma vao duoc,
+          luc bat dau con trong thi BOT lap) / BOT (bot giu cho) /
+          DONG (phe do khong tham gia tran). Khi moi nguoi da vao,
+          chu phong bam BAT DAU TRAN (khong nhat thiet cho moi nguoi
+          bam SAN SANG — nut do chi de bao hieu).
   Luu y: GIU cua so den cua start_host.bat mo suot tran —
          tat cua so = may chu tat = tran dung.
 
@@ -46,7 +54,7 @@ B. MAY CHU NHA LA LINUX
 =======================================================
   Mo terminal trong thu muc goi-chu-nha, chay:  ./start_host.sh
   Cua so in san duong dan co IP LAN de gui ban be.
-  Cac buoc vao phong (4-6 o tren) giong het Windows.
+  Cac buoc vao phong (4-7 o tren) giong het Windows.
 
 =======================================================
 LUU Y CHUNG

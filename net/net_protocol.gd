@@ -10,7 +10,11 @@ extends RefCounted
 # v2 (đợt gộp vào main sau plan Đế Chế hoá): thêm lệnh RTS/chợ/lên đời/
 # nghiên cứu/nâng cấp + trường extra_i của bản ghi snapshot mang CẤP
 # (quân/nhà/đời) + node mang owner (ruộng) — client v1 đọc sai nên chặn.
-const PROTOCOL_VERSION := 2
+# v3 (menu phòng chờ): hello không vào thẳng slot nữa mà qua trạng thái
+# "prejoin" — chủ phòng TẠO PHÒNG (server sinh MÃ PHÒNG 6 ký tự), khách
+# phải JOIN bằng mã đúng mới nhận slot; chủ phòng đặt chế độ từng slot
+# (open/bot/closed) + đổi tên phòng qua lobby_action.
+const PROTOCOL_VERSION := 3
 
 # Cổng chủ nhà: 8910 = WebSocket game, 8911 = HTTP tĩnh phục vụ bản web.
 const PORT := 8910
@@ -58,6 +62,13 @@ const R_MAXED := "MAXED" # đã ở Đời/cấp tối đa (3)
 const R_BUSY := "BUSY" # công trình đang nghiên cứu việc khác
 const R_NO_SPACE := "NO_SPACE" # kho không còn chỗ chứa (chợ)
 const R_NOT_UPGRADEABLE := "NOT_UPGRADEABLE" # loại nhà không nâng cấp được (ruộng)
+# Mã cho luồng phòng chờ v3 (tạo phòng / vào phòng / quyền chủ phòng).
+const R_WRONG_CODE := "WRONG_CODE" # sai mã phòng
+const R_NOT_HOST := "NOT_HOST" # chỉ chủ phòng mới làm được việc này
+const R_ROOM_EXISTS := "ROOM_EXISTS" # phòng đã được tạo rồi
+const R_NO_ROOM := "NO_ROOM" # chưa có phòng nào để vào
+const R_ROOM_FULL := "ROOM_FULL" # không còn slot mở cho người
+const R_NEED_RIVAL := "NEED_RIVAL" # cần ít nhất 2 phe hoạt động (người/bot) mới bắt đầu được
 
 ## Câu báo thân thiện cho người chơi theo mã lý do (client hiển thị).
 static func reason_text(reason: String) -> String:
@@ -96,5 +107,17 @@ static func reason_text(reason: String) -> String:
 			return "Kho không còn chỗ chứa cho giao dịch này."
 		R_NOT_UPGRADEABLE:
 			return "Công trình này không nâng cấp được."
+		R_WRONG_CODE:
+			return "Sai mã phòng — kiểm tra lại mã chủ phòng gửi nhé."
+		R_NOT_HOST:
+			return "Chỉ CHỦ PHÒNG mới làm được việc này."
+		R_ROOM_EXISTS:
+			return "Phòng đã được tạo rồi — hãy nhập mã để vào."
+		R_NO_ROOM:
+			return "Chưa có phòng nào — hãy tạo phòng trước."
+		R_ROOM_FULL:
+			return "Phòng không còn slot trống cho người chơi."
+		R_NEED_RIVAL:
+			return "Cần ít nhất 2 phe hoạt động — mở thêm slot BOT hoặc chờ thêm người."
 		_:
 			return "Lệnh bị từ chối (%s)." % reason

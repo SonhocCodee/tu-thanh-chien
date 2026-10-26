@@ -33,6 +33,9 @@ a_out = read("client_a_stdout.log")
 b_out = read("client_b_stdout.log")
 b2_log = read("client_b2.log")
 b2_out = read("client_b2_stdout.log")
+c_out = read("client_c_stdout.log")
+c2_log = read("client_c2.log")
+e_log = read("client_e.log")
 http = read("http_check.txt")
 
 # --- Hạ tầng ---
@@ -52,9 +55,42 @@ def hello_slot(name):
 
 
 slot_a, slot_b = hello_slot("A"), hello_slot("B")
-check("hello_slots", slot_a >= 0 and slot_b >= 0 and slot_a != slot_b,
-      f"A=slot {slot_a}, B=slot {slot_b} (theo thứ tự kết nối)")
+slot_c = hello_slot("C")
+check("hello_slots", slot_a >= 0 and slot_b >= 0 and slot_c >= 0
+      and len({slot_a, slot_b, slot_c}) == 3,
+      f"A=slot {slot_a}, B=slot {slot_b}, C=slot {slot_c} (3 người, 3 slot khác nhau)")
 check("match_start", "MATCH_START" in srv, "trận bắt đầu (bot lấp slot trống)")
+
+# --- Phòng chờ v3: tạo phòng / mã phòng / quyền chủ phòng / slot đóng ---
+CODE_CHARS = set("ABCDEFGHJKLMNPQRSTUVWXYZ23456789")
+m_code = re.search(r"ROOM_CREATED code=([A-Z0-9]{6})\b", srv)
+check("room_code_format", m_code is not None and set(m_code.group(1)) <= CODE_CHARS,
+      f"mã phòng 6 ký tự, bỏ ký tự dễ nhầm 0/O/1/I: {m_code.group(1) if m_code else 'không thấy'}")
+check("join_wrong_code", "JOIN_REJECT" in srv and "reason=WRONG_CODE" in srv
+      and "AUTOTEST wrong_code_reject=1" in c_out,
+      "C vào bằng MÃ SAI -> server từ chối WRONG_CODE, client nhận đúng hồi báo")
+check("guest_start_reject", "START_REJECT reason=NOT_HOST" in srv
+      and "AUTOTEST start_guest_reject=1" in c_out,
+      "C (khách) thử bấm BẮT ĐẦU -> bị từ chối NOT_HOST")
+m_closed = re.search(r"SET_SLOT slot=(\d+) mode=closed", srv)
+closed_slot = int(m_closed.group(1)) if m_closed else -1
+check("host_set_slot_closed", closed_slot >= 0 and closed_slot not in (slot_a, slot_b, slot_c),
+      f"chủ phòng đóng slot trống {closed_slot} (không đụng slot người)")
+check("a_slot_closed_ok", "FLAG slot_closed_ok true" in a_log,
+      "A thấy lệnh đóng slot của mình có hiệu lực qua lobby_update")
+m_bots = re.search(r"MATCH_START bots=\[([^\]]*)\]", srv)
+bot_list = [int(x) for x in m_bots.group(1).split(",") if x.strip() != ""] if m_bots else []
+check("closed_faction_out", f"SLOT_CLOSED_ELIMINATED slot={closed_slot}" in srv
+      and closed_slot not in bot_list,
+      f"slot đóng {closed_slot} bị loại khỏi trận, danh sách bot lấp: {bot_list}")
+c2_reclaim_at = srv.find("HELLO_RECLAIM")
+match_start_at = srv.find("MATCH_START")
+check("lobby_reclaim", c2_reclaim_at >= 0 and match_start_at >= 0 and c2_reclaim_at < match_start_at
+      and f"slot={slot_c} " in srv[c2_reclaim_at:c2_reclaim_at + 80]
+      and "FLAG lobby_reclaim true" in c2_log and "FLAG slot_closed_seen true" in c2_log,
+      f"C rớt mạng Ở LOBBY -> nối lại đúng slot {slot_c} trước khi trận bắt đầu, thấy slot đã đóng")
+check("late_join_reject", "FLAG late_reject true" in e_log,
+      "E nối vào GIỮA TRẬN (không token) -> bị từ chối IN_MATCH")
 
 # --- Đường lệnh qua PlayerController (server log) ---
 def cmd(op, slot, result, reason=""):

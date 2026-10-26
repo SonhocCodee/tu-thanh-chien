@@ -1,5 +1,57 @@
 # TRẠNG THÁI TÍCH HỢP LAN (M3) — ĐÃ GỘP VÀO MAIN
 
+## BỔ SUNG (nhánh `phong-cho`, CHƯA gộp main): MENU PHÒNG CHỜ ĐẦY ĐỦ — giao thức v3
+
+Đợt riêng sau khi user hỏi "menu tạo phòng / mã code đâu": bản rút gọn
+(nối vào là có slot, chủ phòng = người nối đầu tiên) được thay bằng
+phòng chờ đàng hoàng, kiến trúc mạng giữ nguyên (WS server-authoritative,
+cổng 8910/8911, token grace 60s):
+
+- **Tạo phòng**: client đầu tiên bấm TẠO PHÒNG -> server sinh **MÃ PHÒNG
+  6 ký tự** (chữ hoa + số, bỏ 0/O/1/I dễ đọc nhầm), người tạo là chủ
+  phòng (slot thấp nhất). Tên phòng mặc định "Phòng của chủ nhà", sửa
+  lúc tạo + chủ phòng đổi tên ngay trong lobby.
+- **Vào phòng**: hello không cấp slot nữa — peer vào trạng thái
+  **prejoin** (welcome slot=-3 kèm room_exists/room_name), khách nhập
+  **tên hiển thị + mã phòng**; sai mã -> REJECT `WRONG_CODE` tường minh
+  (kênh command_result — sửa cả lỗi cũ: client prejoin chưa có
+  NetController nên hồi báo lobby từng bị đánh rơi). Đúng mã -> slot
+  "open" thấp nhất. Vào sau khi trận bắt đầu vẫn bị IN_MATCH như cũ
+  (trừ nối lại bằng token).
+- **Lobby**: hiện tên phòng + MÃ PHÒNG to + 4 slot theo phe. Slot trống
+  có chế độ do chủ phòng đặt: **open** (chờ người, trống lúc bắt đầu thì
+  bot lấp) / **bot** / **closed**. Khách gọi hành động của chủ phòng
+  (start/set_slot/rename) -> REJECT `NOT_HOST` tường minh. Chủ phòng
+  bấm BẮT ĐẦU là đi (bỏ cổng "mọi người sẵn sàng" — ready chỉ còn hiển
+  thị); rào duy nhất ở server: **ít nhất 2 phe hoạt động** (`NEED_RIVAL`).
+- **Slot ĐÓNG — quyết định xử lý**: phe đóng bị loại qua ĐÚNG đường
+  loại phe tự nhiên của game ngay lúc bắt đầu trận: server phá thành
+  của slot đó bằng `take_damage` (silent, không nổ) -> signal
+  `structure_destroyed` -> `Main._on_structure_destroyed` ->
+  `_eliminate_player` (tàn tích thành, quân/nông dân khởi đầu tan, tài
+  nguyên về 0, thắng/thua đếm phe còn sống như 1 phe bị hạ ở giây 0).
+  Không bot "thụ động", không sửa sim. Chủ phòng thoát hẳn khỏi lobby
+  sau grace -> người còn lại slot thấp nhất được thăng chủ; không còn
+  ai -> phòng giải tán (mã hết hiệu lực).
+- **Kiểm chứng**: harness `tools/run_net_test.sh` nới từ 42 lên **50 ca,
+  PASS toàn bộ** — thêm: mã đúng định dạng; sai mã bị WRONG_CODE vào
+  lại mã đúng nhận slot riêng; khách thứ 3 vào slot khác; chủ phòng đóng
+  slot -> khách thấy closed + phe đó bị loại khỏi trận (bots=[] khi 3
+  người + 1 đóng); khách bấm bắt đầu bị NOT_HOST; chủ phòng bắt đầu ->
+  trận chạy, kiểm toán snapshot **26.450 lượt, 0 vi phạm sương mù**; C
+  rớt mạng Ở LOBBY -> nối lại đúng slot trước giờ bắt đầu; E vào giữa
+  trận bị IN_MATCH. Kịch bản autotest đổi theo luồng mới: A tạo phòng,
+  script trích mã từ server log phát cho B/C (như bạn bè nhận mã); B
+  chọn địch người GẦN NHẤT để trinh sát (3 người thì địch xa chéo map
+  làm lính trinh sát chết dọc đường); chủ phòng autotest giữ điều kiện
+  bắt đầu liên tục 8s (đánh giá trong `_process`, không chỉ ở sự kiện
+  lobby) để cửa sổ giết/nối lại C không đua với nút bắt đầu.
+- Ảnh: `reports/net/shots/net_lobby_A.png` (lobby chủ nhà: mã phòng +
+  slot đã đóng) + bản chép ở `screenshots/lobby_host.png`,
+  `screenshots/lobby_guest_entry.png` (màn hình nhập mã phía khách).
+- Giới hạn còn lại: client web thật qua IP LAN vẫn chưa kiểm chứng
+  được trong VM (như cũ — chờ buổi test máy thật của user).
+
 Cập nhật: 2026-10-24 (đợt gộp CUỐI). Nguồn: nhánh `lan-m3` (`83fc7dc`, neo
 `d07b7b8`) được PORT TAY lên main sau khi plan Đế Chế hoá đợt 1 đã đủ 5/5
 (nền khi gộp: `ed5c173` — thợ xây, cân bằng cung/cận chiến, nông trại, chợ,
@@ -138,8 +190,8 @@ freed nên không lộ; bản main hiện tại + phiên 170s thì lộ. Sau s�
 
 ## Giới hạn đã biết
 
-1. Phòng chờ giản lược: slot trống tự lấp bot lúc bắt đầu; chủ phòng =
-   người nối đầu tiên (không chọn/chuyển được).
+1. ~~Phòng chờ giản lược~~ — ĐÃ THAY bằng menu phòng chờ đầy đủ trên
+   nhánh `phong-cho` (xem mục BỔ SUNG ở đầu tài liệu; chưa gộp main).
 2. Slot rớt mạng NGAY lúc bắt đầu trận: đứng thụ động tới hết grace 60s
    mới có bot tiếp quản; nối lại SAU khi bot đã tiếp quản thì bot lái
    song song (Main chưa có API gỡ bot).

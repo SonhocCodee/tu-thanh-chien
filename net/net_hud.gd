@@ -13,10 +13,31 @@ var client: Node = null # NetClient
 
 var _lobby_panel: Panel = null
 var _lobby_title: Label = null
-var _lobby_rows: Label = null
 var _lobby_status: Label = null
 var _btn_ready: Button = null
 var _btn_start: Button = null
+# Phòng chờ v3: 2 hộp nội dung trong cùng 1 panel — hộp VÀO PHÒNG (tạo
+# phòng / nhập mã) và hộp LOBBY (mã phòng + slot + nút của chủ phòng).
+# Mọi control dựng 1 lần lúc setup, refresh chỉ đổi text/visible (không
+# dựng lại) để ô nhập liệu không bị xoá chữ giữa chừng.
+var _entry_box: VBoxContainer = null
+var _create_box: VBoxContainer = null
+var _join_box: VBoxContainer = null
+var _join_info: Label = null
+var _entry_error: Label = null
+var _edit_name_create: LineEdit = null
+var _edit_room_name: LineEdit = null
+var _edit_name_join: LineEdit = null
+var _edit_code: LineEdit = null
+var _room_box: VBoxContainer = null
+var _room_title: Label = null
+var _code_label: Label = null
+var _rename_row: HBoxContainer = null
+var _edit_rename: LineEdit = null
+var _slot_labels: Array = [] # 4 Label của 4 hàng slot
+var _slot_btns: Array = [] # 4 Button đổi chế độ slot (chỉ chủ phòng thấy)
+var _lobby_error: Label = null
+var _lobby_note: Label = null
 
 var _pill: Label = null
 var _msg: Label = null
@@ -70,69 +91,215 @@ func setup(p_client: Node) -> void:
 	_build_lobby()
 	_build_game_hud()
 	_build_end()
-	show_lobby()
+	show_entry()
 
 # ============================ PHÒNG CHỜ ============================
+
+func _mk_edit(placeholder: String, text: String = "", max_len: int = 0) -> LineEdit:
+	var e := LineEdit.new()
+	e.placeholder_text = placeholder
+	e.text = text
+	e.max_length = max_len
+	e.add_theme_font_size_override("font_size", 15)
+	e.custom_minimum_size = Vector2(0, 34)
+	return e
 
 func _build_lobby() -> void:
 	_lobby_panel = Panel.new()
 	_lobby_panel.add_theme_stylebox_override("panel", _panel_style())
-	_lobby_panel.position = Vector2(400, 130)
-	_lobby_panel.size = Vector2(480, 440)
+	_lobby_panel.position = Vector2(330, 84)
+	_lobby_panel.size = Vector2(620, 552)
 	add_child(_lobby_panel)
 	var vb := VBoxContainer.new()
 	vb.set_anchors_preset(Control.PRESET_FULL_RECT)
-	vb.add_theme_constant_override("separation", 10)
+	vb.add_theme_constant_override("separation", 8)
 	_lobby_panel.add_child(vb)
-	_lobby_title = _mk_label("PHÒNG CHỜ — CHƠI QUA MẠNG LAN", 22, Color(1.0, 0.85, 0.3))
+	_lobby_title = _mk_label("CHƠI QUA MẠNG LAN", 22, Color(1.0, 0.85, 0.3))
 	_lobby_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vb.add_child(_lobby_title)
-	_lobby_status = _mk_label("Đang kết nối...", 15)
+	_lobby_status = _mk_label("Đang kết nối...", 14)
 	_lobby_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_lobby_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vb.add_child(_lobby_status)
-	_lobby_rows = _mk_label("", 17)
-	_lobby_rows.custom_minimum_size = Vector2(440, 170)
-	vb.add_child(_lobby_rows)
+	# ---------- Hộp VÀO PHÒNG (prejoin) ----------
+	_entry_box = VBoxContainer.new()
+	_entry_box.add_theme_constant_override("separation", 8)
+	vb.add_child(_entry_box)
+	_create_box = VBoxContainer.new()
+	_create_box.add_theme_constant_override("separation", 6)
+	_entry_box.add_child(_create_box)
+	var create_title := _mk_label("TẠO PHÒNG MỚI", 17, Color(1.0, 0.85, 0.3))
+	create_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_create_box.add_child(create_title)
+	_edit_room_name = _mk_edit("Tên phòng", "Phòng của chủ nhà", 40)
+	_create_box.add_child(_edit_room_name)
+	_edit_name_create = _mk_edit("Tên hiển thị của bạn", "", 24)
+	_create_box.add_child(_edit_name_create)
+	var btn_create := _mk_button("TẠO PHÒNG")
+	btn_create.pressed.connect(func() -> void:
+		client.ui_create_room(_edit_name_create.text, _edit_room_name.text))
+	_create_box.add_child(btn_create)
+	var create_note := _mk_label("Tạo phòng xong, game cho bạn 1 MÃ PHÒNG —\ngửi link + mã cho bạn bè cùng Wi-Fi để họ vào.", 13, Color(0.7, 0.75, 0.85))
+	create_note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_create_box.add_child(create_note)
+	_join_box = VBoxContainer.new()
+	_join_box.add_theme_constant_override("separation", 6)
+	_entry_box.add_child(_join_box)
+	var join_title := _mk_label("VÀO PHÒNG", 17, Color(1.0, 0.85, 0.3))
+	join_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_join_box.add_child(join_title)
+	_join_info = _mk_label("", 14)
+	_join_info.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_join_box.add_child(_join_info)
+	_edit_name_join = _mk_edit("Tên hiển thị của bạn", "", 24)
+	_join_box.add_child(_edit_name_join)
+	_edit_code = _mk_edit("MÃ PHÒNG (6 ký tự)", "", 6)
+	_join_box.add_child(_edit_code)
+	var btn_join := _mk_button("VÀO PHÒNG")
+	btn_join.pressed.connect(func() -> void:
+		client.ui_join_room(_edit_name_join.text, _edit_code.text))
+	_join_box.add_child(btn_join)
+	_entry_error = _mk_label("", 14, Color(1.0, 0.45, 0.4))
+	_entry_error.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_entry_box.add_child(_entry_error)
+	# ---------- Hộp LOBBY (đã có slot) ----------
+	_room_box = VBoxContainer.new()
+	_room_box.add_theme_constant_override("separation", 7)
+	vb.add_child(_room_box)
+	_room_title = _mk_label("", 20, Color(1.0, 0.85, 0.3))
+	_room_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_room_box.add_child(_room_title)
+	_code_label = _mk_label("", 27, Color(1.0, 0.85, 0.3))
+	_code_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_room_box.add_child(_code_label)
+	_rename_row = HBoxContainer.new()
+	_rename_row.add_theme_constant_override("separation", 6)
+	_room_box.add_child(_rename_row)
+	_edit_rename = _mk_edit("Tên phòng mới", "", 40)
+	_edit_rename.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_rename_row.add_child(_edit_rename)
+	var btn_rename := _mk_button("ĐỔI TÊN")
+	btn_rename.pressed.connect(func() -> void: client.ui_rename_room(_edit_rename.text))
+	_rename_row.add_child(btn_rename)
+	for slot in range(4):
+		var s: int = slot # bản sao cho lambda bắt đúng slot của hàng này
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+		_room_box.add_child(row)
+		var lb := _mk_label("", 15)
+		lb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		lb.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		row.add_child(lb)
+		_slot_labels.append(lb)
+		var b := _mk_button("")
+		b.custom_minimum_size = Vector2(168, 0)
+		b.pressed.connect(func() -> void: _cycle_slot(s))
+		row.add_child(b)
+		_slot_btns.append(b)
+	_lobby_error = _mk_label("", 14, Color(1.0, 0.45, 0.4))
+	_lobby_error.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_room_box.add_child(_lobby_error)
 	_btn_ready = _mk_button("SẴN SÀNG")
 	_btn_ready.pressed.connect(func() -> void: client.ui_ready())
-	vb.add_child(_btn_ready)
+	_room_box.add_child(_btn_ready)
 	_btn_start = _mk_button("BẮT ĐẦU TRẬN (chủ phòng)")
 	_btn_start.pressed.connect(func() -> void: client.ui_start())
-	vb.add_child(_btn_start)
-	var note := _mk_label("Slot trống sẽ do BOT lấp khi trận bắt đầu.\nChủ phòng là người kết nối đầu tiên.", 13, Color(0.7, 0.75, 0.85))
-	note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	vb.add_child(note)
+	_room_box.add_child(_btn_start)
+	_lobby_note = _mk_label("", 13, Color(0.7, 0.75, 0.85))
+	_lobby_note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_lobby_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_room_box.add_child(_lobby_note)
 
-func show_lobby() -> void:
-	_lobby_panel.visible = true
+## Chủ phòng bấm nút chế độ của 1 slot trống: xoay vòng
+## CHỜ NGƯỜI -> BOT -> ĐÓNG -> CHỜ NGƯỜI (server là nơi chốt thật).
+const SLOT_MODE_CYCLE := {"open": "bot", "bot": "closed", "closed": "open"}
+const SLOT_MODE_LABEL := {"open": "CHỜ NGƯỜI", "bot": "BOT", "closed": "ĐÓNG"}
+
+func _cycle_slot(target_slot: int) -> void:
+	var info: Dictionary = client.lobby_slots.get(target_slot, {})
+	var kind := String(info.get("kind", "open"))
+	client.ui_set_slot_mode(target_slot, String(SLOT_MODE_CYCLE.get(kind, "open")))
+
+func _hide_game_hud() -> void:
 	_pill.visible = false
 	_bottom.visible = false
 	_bottom2.visible = false
 	_alloc_box.visible = false
 
-func refresh_lobby() -> void:
+func show_entry() -> void:
+	_lobby_panel.visible = true
+	_entry_box.visible = true
+	_room_box.visible = false
+	_hide_game_hud()
+	refresh_entry()
+
+func show_lobby() -> void:
+	_lobby_panel.visible = true
+	_entry_box.visible = false
+	_room_box.visible = true
+	_hide_game_hud()
+	refresh_lobby()
+
+func refresh_entry() -> void:
 	if client == null:
 		return
 	_lobby_status.text = String(client.conn_status)
-	var lines: Array = []
+	var has_room := bool(client.room_info.get("exists", false))
+	_create_box.visible = not has_room
+	_join_box.visible = has_room
+	if has_room:
+		_join_info.text = "Phòng \"%s\" đang mở — nhập mã chủ phòng đã gửi:" % String(client.room_info.get("name", ""))
+	if _edit_name_create.text == "":
+		_edit_name_create.text = String(client._my_name)
+	if _edit_name_join.text == "":
+		_edit_name_join.text = String(client._my_name)
+	_entry_error.text = String(client.lobby_error)
+
+func refresh_lobby() -> void:
+	if client == null:
+		return
+	if client.slot < 0:
+		# Chưa có slot (prejoin / bị từ chối): màn hình vào phòng lo hết.
+		show_entry()
+		return
+	if not _room_box.visible:
+		show_lobby()
+		return
+	_lobby_status.text = String(client.conn_status)
+	_room_title.text = String(client.room_info.get("name", ""))
+	_code_label.text = "MÃ PHÒNG: %s" % String(client.room_info.get("code", ""))
+	_rename_row.visible = bool(client.is_host)
+	_lobby_error.text = String(client.lobby_error)
 	var slots: Dictionary = client.lobby_slots
 	for slot in range(4):
-		var info: Dictionary = slots.get(slot, {"kind": "bot"})
-		var color: String = SLOT_NAMES[slot]
-		if String(info.get("kind", "bot")) == "human":
-			var nm: String = String(info.get("name", "?"))
+		var info: Dictionary = slots.get(slot, {"kind": "open"})
+		var kind := String(info.get("kind", "open"))
+		var lb := _slot_labels[slot] as Label
+		var btn := _slot_btns[slot] as Button
+		if kind == "human":
 			var st := "đã sẵn sàng" if bool(info.get("ready", false)) else "chưa sẵn sàng"
 			if not bool(info.get("connected", true)):
 				st = "ĐANG RỚT MẠNG (giữ slot 60s)"
 			var host_tag := " — CHỦ PHÒNG" if bool(info.get("is_host", false)) else ""
 			var me_tag := " (BẠN)" if slot == client.slot else ""
-			lines.append("Phe %s: %s%s — %s%s" % [color, nm, me_tag, st, host_tag])
+			lb.text = "Phe %s: %s%s — %s%s" % [SLOT_NAMES[slot], String(info.get("name", "?")), me_tag, st, host_tag]
+			btn.visible = false
 		else:
-			lines.append("Phe %s: BOT (tự động lấp)" % color)
-	_lobby_rows.text = "\n".join(lines)
-	_btn_ready.disabled = client.slot < 0 or bool(client.my_ready)
+			match kind:
+				"bot":
+					lb.text = "Phe %s: BOT giữ chỗ" % SLOT_NAMES[slot]
+				"closed":
+					lb.text = "Phe %s: ĐÃ ĐÓNG — không tham gia trận" % SLOT_NAMES[slot]
+				_:
+					lb.text = "Phe %s: TRỐNG — chờ người vào" % SLOT_NAMES[slot]
+			btn.visible = bool(client.is_host)
+			btn.text = "Chế độ: %s ▸" % String(SLOT_MODE_LABEL.get(kind, kind))
+	_btn_ready.disabled = bool(client.my_ready)
 	_btn_start.visible = bool(client.is_host)
-	_btn_start.disabled = client.slot < 0
+	if client.is_host:
+		_lobby_note.text = "Bấm nút chế độ ở mỗi slot trống để đổi: CHỜ NGƯỜI (ai vào cũng được, trống lúc bắt đầu thì BOT lấp) / BOT / ĐÓNG (phe không tham gia)."
+	else:
+		_lobby_note.text = "Chờ chủ phòng bắt đầu trận..."
 
 # ============================ HUD TRẬN ============================
 
