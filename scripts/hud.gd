@@ -1166,9 +1166,16 @@ func _build_help() -> void:
 	vb.add_theme_constant_override("separation", 10)
 	root.add_child(vb)
 	_ribbon_header(vb, "HƯỚNG DẪN ĐIỀU KHIỂN")
-	var body := _mk_label(vb, "", 13, COL_TEXT_DARK)
+	# Nội dung dài hơn chiều cao panel → cho vùng chữ CUỘN dọc trong khung
+	# (trước đây Label tràn thẳng ra khỏi mép dưới panel, 2 mục cuối không
+	# đọc được). Label giãn ngang theo khung cuộn để autowrap đúng bề rộng.
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	vb.add_child(scroll)
+	var body := _mk_label(scroll, "", 13, COL_TEXT_DARK)
 	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	body.text = "\n".join([
 		"KÉO CHUỘT TRÁI: kéo khung chọn quân (khung GÓC VÀNG = vùng đang chọn, vòng xanh dưới chân = quân đã chọn).",
 		"CLICK TRÁI 1 đơn vị: chọn riêng nó. Bấm đất trống / quân địch: bỏ chọn.",
